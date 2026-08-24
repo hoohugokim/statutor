@@ -1,33 +1,33 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-23 by `CI green on push run 32682110629's successor + PR #1 checks (all legs)`
+last_verified: 2026-08-23 by `CI green all 4 legs + PR #1 self-dogfood proven; local 204p/6s, 210p/0s w/ PyYAML`
 
 ## Goal
 Ship statutor v0.3: CI-verified, published, plugin-installable on all five adapters.
 
 ## Last verified state
-Rename writ→statutor executed (D-0009/D-0010, T-0014); repo at
-~/workbench/statutor, remote github.com/hoohugokim/statutor (PRIVATE), main
-pushed. CI PROVEN: first run caught a real pyyaml=false bug (pristine-scaffold
-.statutor.yaml tripping the unapplied-policy WARN → Stop hook spoke); fixed in
-3f491db; second run green on all four legs. PR #1 (chore: .gitignore) proved
-the pull_request self-dogfood step end-to-end (`statutor staged` over the PR
-delta, all legs) — T-0008 closed. Local: 204 passed/6 skipped; 210/0 with
-PyYAML. Git floor live on this repo (.git/hooks shim): rejected a staged
-DECISIONS.md deletion in anger. Old writ tree retired UNMODIFIED.
+Rename writ→statutor complete (D-0009/D-0010); repo ~/workbench/statutor,
+remote github.com/hoohugokim/statutor (PRIVATE), main @ 6e192d7 (PR #1 merged).
+CI proven: first run caught the pristine-scaffold WARN bug (fixed, 3f491db);
+all four matrix legs green; PR self-dogfood (`statutor staged` over PR delta)
+executed and passed on every leg. Git floor live locally (.git/hooks shim) —
+rejected a staged DECISIONS.md deletion in anger. Old writ tree retired
+UNMODIFIED at ~/workbench/Writ/writ.
 
 ## Next action
-Human: (1) merge PR #1 (merge was classifier-blocked for the agent);
-(2) claim PyPI `statutor` + npm/crates placeholders TODAY, then flip the repo
-public (`gh repo edit hoohugokim/statutor --visibility public`);
-(3) reinstall the Claude plugin from ~/workbench/statutor. Then T-0007.
+Human executes plans/registry-claims.md: T-0015 claim PyPI `statutor` (build +
+twine upload), T-0016 npm placeholder, T-0017 crates placeholder, T-0018 flip
+repo public — SAME DAY, before announcing the name anywhere. In parallel or
+after: reinstall the Claude plugin from ~/workbench/statutor (part of T-0007
+rehearsal: /plugin marketplace add ~/workbench/statutor, install
+statutor@hoo-plugins). New agent sessions start cold from this file + AGENTS.md.
 
 ## Gotchas
-PyPI is first-come; do not announce before claiming. The session's installed
-plugin still points at the OLD Writ path — reinstall before trusting in-loop
-hooks here. DECISIONS.md keeps its `<!-- writ: -->` header marker (append-only;
-by design). python3 here is 3.9.6 — run tests via /opt/homebrew/bin/pytest.
+PyPI versions are immutable — 0.2.0 is burned once uploaded; polish metadata at
+v0.3, not by re-upload. Session hooks may still point at the OLD Writ plugin
+until reinstall. DECISIONS.md keeps its `<!-- writ: -->` header marker
+(append-only; by design). python3 here is 3.9.6 — test via /opt/homebrew/bin/pytest.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of

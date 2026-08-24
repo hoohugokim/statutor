@@ -15,3 +15,7 @@
 - [ ] T-0012 adapters/git/pre-commit vendored fallback points at `.statutor/statutor_core.py` which `statutor init` never creates — vendor it or drop the branch (README documents the mismatch)
 - [ ] T-0013 Generalize statutor_doctor's remaining hardcoded names (DECISIONS.md status check, TASKS.md/plans consumed-plan heuristic) to policy-derived filenames
 - [x] T-0014 Execute the rename once D-0010 records the new name: pyproject, plugin.json, `.writ.yaml` policy filename, hooks/commands/skills, READMEs, repo dir
+- [ ] T-0015 Claim PyPI `statutor`: build + twine-upload v0.2.0 (runbook plans/registry-claims.md); re-scope the API token to the project afterward
+- [ ] T-0016 Publish honest npm placeholder `statutor` 0.0.1 pointing at PyPI + this repo
+- [ ] T-0017 Publish honest crates.io placeholder `statutor` 0.0.1 (lib crate, doc-comment reservation)
+- [ ] T-0018 After T-0015: flip repo public (`gh repo edit hoohugokim/statutor --visibility public`); optionally claim GitHub org + statutor.dev

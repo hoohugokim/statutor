@@ -23,29 +23,14 @@ package — uploading v0.2.0 as-is IS the claim.
    tagged-release publish workflow via PyPI "trusted publisher" so tokens
    disappear entirely. Versions are immutable — 0.2.0 is burned once up.
 
-## T-0016 — npm placeholder `statutor`
-npm dislikes silent squats; publish an HONEST reservation.
-1. Account: <https://www.npmjs.com/signup> → enable 2FA. `brew install node`
-   if needed, then `npm login`.
-2. In `~/workbench/statutor-placeholders/npm/`: a `package.json`
-   { "name": "statutor", "version": "0.0.1", "description": "Name reserved
-   for statutor, a typed project-ledger framework for agentic repos. The
-   real package is on PyPI: pip install statutor.", "repository":
-   "github:hoohugokim/statutor", "license": "MIT" } plus a README.md saying
-   the same in one paragraph.
-3. `npm publish --access public`.
+## T-0016 — npm placeholder `statutor` (REAL artifact — D-0014, built by T-0019)
+Package source: `adapters/opencode/` in-repo (OpenCode adapter + docs).
+    cd ~/workbench/statutor/adapters/opencode && npm login && npm publish --access public
 
-## T-0017 — crates.io placeholder `statutor`
-crates.io is first-come; reservation crates are routine but be honest.
-1. Log in at <https://crates.io> with GitHub; Settings → API Tokens → new
-   token. `brew install rust` if needed, then `cargo login <token>`.
-   Verify a crates.io email under Settings → Profile (publish requires it).
-2. `cd ~/workbench/statutor-placeholders && cargo new statutor --lib`
-3. In its Cargo.toml add: description = "Name reserved for statutor, a
-   typed project-ledger framework for agentic repos (real package on
-   PyPI)", license = "MIT", repository = "https://github.com/hoohugokim/statutor"
-   In src/lib.rs replace contents with a `//!` doc comment saying the same.
-4. `cargo publish` (add `--allow-dirty` if it complains about the fresh dir).
+## T-0017 — crates.io `statutor` (REAL artifact — D-0014, built by T-0020..T-0022)
+Crate source: `crates/statutor/` (binary `statutor-staged`, conformance-gated
+against the Python kernel). Publish only after the CI rust leg is green:
+    cd ~/workbench/statutor/crates/statutor && cargo login <token> && cargo publish
 
 ## T-0018 — after T-0015: go public
     gh repo edit hoohugokim/statutor --visibility public

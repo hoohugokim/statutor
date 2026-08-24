@@ -1,33 +1,35 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-24 by `pypi.org/pypi/statutor/json → 0.2.0 live (whl + sdist); CI green all four legs`
+last_verified: 2026-08-24 by `pytest -q → 245 passed/6 skipped; statutor staged clean; v0.2.0 tag on origin`
 
 ## Goal
 Ship statutor v0.3: CI-verified, published, plugin-installable on all five adapters.
 
 ## Last verified state
-PyPI `statutor` 0.2.0 is LIVE (T-0015 done). Repo github.com/hoohugokim/statutor,
-main pushed, CI green on all four legs incl. the PR self-dogfood (T-0008).
-Rename complete (D-0009/D-0010); git floor live locally (.git/hooks shim).
-Old writ tree at ~/workbench/Writ is approved for deletion by the human —
-nothing in this repo references it; only the stale plugin install points there.
+Open agent queue drained 2026-08-24: T-0011 kernel parses apply_patch
+envelopes (D-0011; opencode allowlist + codex matcher widened), T-0012
+pre-commit hook fails closed without the CLI, T-0013 doctor filenames are
+policy-derived, T-0010 Hermes gets full in-loop enforcement via the new
+plugin adapter (pre_tool_call block directive, verified from hermes-agent
+source). T-0007 half-done: v0.2.0 tagged at the published tree + pushed;
+interactive /plugin swap remains. Suite 245 passed/6 skipped; floor clean.
 
 ## Next action
-Human: T-0016 npm placeholder + T-0017 crates placeholder (runbook
-plans/registry-claims.md), T-0018 flip repo public. Then the plugin swap:
-/plugin marketplace remove the old writ path, /plugin marketplace add
-~/workbench/statutor, install statutor@hoo-plugins (first half of T-0007).
-New agent sessions start cold from this file + AGENTS.md and work the open
-TASKS.md queue (T-0006, T-0007, T-0010..T-0013, T-0016..T-0018).
+Human: (1) re-scope or drop T-0006 — the "Clawd 5-hour checkpoint hook"
+referenced there does not exist on disk; (2) finish T-0007 in Claude Code:
+/plugin marketplace remove the old writ path, add ~/workbench/statutor,
+install statutor@hoo-plugins; (3) T-0016/T-0017/T-0018 registry steps per
+plans/registry-claims.md. Then archive that plan and cut v0.3 (metadata
+polish + trusted-publisher workflow; 0.2.0 is burned).
 
 ## Gotchas
-PyPI versions are immutable — 0.2.0 is burned; metadata polish lands as v0.3,
-not a re-upload. npm/crates stay HONEST placeholders for now; the promotion
-intents live in ROADMAP "Later" (npm → real OpenCode plugin after T-0011;
-crates → needs a D-record against D-0003's single-kernel rule). DECISIONS.md
-keeps its `<!-- writ: -->` marker (append-only). python3 is 3.9.6 — run tests
-via /opt/homebrew/bin/pytest.
+Two doctor WARNs are expected until the plans above archive (each names its
+own completion condition). AGENTS.md pitfall about apply_patch/MCP allowlist
+misses is now stale — writer=human, needs a human edit line. The local git
+floor is an in-repo shim (.git/hooks/pre-commit); no global CLI install
+(PEP 668 blocks brew pip). python3 is 3.9.6 — run tests via
+/opt/homebrew/bin/pytest. DECISIONS.md keeps its writ header marker.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of

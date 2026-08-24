@@ -24,8 +24,7 @@ It governs itself with its own ledger (dogfood is mandatory).
 
 ## Pitfalls (hard-won, one line each)
 - `/bin/sh` heredoc scripts: no brace expansion — `mkdir -p a/{b,c}` makes a literal `{b,c}` dir.
-- Codex hooks are default-on since rust-v0.124.0 and PreToolUse also fires for apply_patch — but its payload is `{command: <patch>}` the kernel can't parse, so coverage stays bash-guard-only; git floor mandatory there.
-- OpenCode plugin hooks DO fire for subagents (v1.18.21 verified; #5894 was a misdiagnosis). Real hole: apply_patch/MCP tool names miss statutor.ts's allowlist — floor covers it (T-0011).
+- apply_patch is kernel-parsed since D-0011; the real remaining hole is MCP tool names – the floor covers them.
 - `.pre-commit-hooks.yaml` must stay at the REPO ROOT or `repo:` consumers break.
 - Repo root IS the Claude plugin root: hooks/, commands/, skills/ stay top-level.
 - In git-floor tests, restore worktree with `git reset -q --hard`, not checkout-then-reset ordering.

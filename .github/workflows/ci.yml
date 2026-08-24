@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }}, pyyaml=${{ matrix.pyyaml }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.14"]
+        pyyaml: [false]
+        include:
+          # One leg exercises the real .statutor.yaml parse path (PyYAML present);
+          # the rest cover the stdlib-only fallback the kernel promises.
+          - python-version: "3.14"
+            pyyaml: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # PRs need full history so the self-dogfood step below can diff
+          # against the base branch; push events don't need it. Both sides
+          # of the expression must be the same type (both strings) — GitHub
+          # Actions coerces a bare 0 to false, so `... && 0 || 1` always
+          # evaluates to 1 regardless of the condition.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+          if [ "${{ matrix.pyyaml }}" = "true" ]; then
+            python -m pip install pyyaml
+          fi
+
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Smoke-test console scripts
+        run: |
+          set -e
+
+          # `statutor init` scaffolds a fresh ledger into an empty directory.
+          tmp_dir="$(mktemp -d)"
+          statutor init "$tmp_dir"
+          test -f "$tmp_dir/AGENTS.md"
+          test -f "$tmp_dir/.statutor.yaml"
+
+          # idempotent: a second run must skip existing files, not overwrite.
+          second_run="$(statutor init "$tmp_dir")"
+          if ! printf '%s\n' "$second_run" | grep -q '^skip  AGENTS.md (exists)$'; then
+            echo "expected second 'statutor init' run to skip existing files" >&2
+            printf '%s\n' "$second_run" >&2
+            exit 1
+          fi
+
+          # `statutor check` must deny (exit 2) a write to a frozen path — sample
+          # denial run against this repo, without touching any file.
+          set +e
+          statutor check write '{"file_path": "plans/archive/frozen-smoke.md", "content": "x"}' .
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "expected 'statutor check' to deny with exit 2, got $status" >&2
+            exit 1
+          fi
+
+          # `statutor check` must allow (exit 0) an unremarkable write.
+          statutor check write '{"file_path": "notes/smoke.md", "content": "x"}' .
+
+          # `statutor hook` (the Claude Code / Codex entry point) must deny via
+          # permissionDecision JSON on stdout, exit 0 either way — hooks
+          # communicate denial through the payload, never the exit code.
+          hook_event='{"tool_name":"Write","tool_input":{"file_path":"plans/archive/frozen-smoke.md","content":"x"},"cwd":"'"$PWD"'"}'
+          hook_out="$(printf '%s' "$hook_event" | statutor hook)"
+          printf '%s' "$hook_out" | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          out = data["hookSpecificOutput"]
+          assert out["hookEventName"] == "PreToolUse", out
+          assert out["permissionDecision"] == "deny", out
+          '
+
+          # `statutor-doctor` lints this repo's own ledger.
+          statutor-doctor .
+
+      - name: "Smoke-test git floor pre-commit hook"
+        run: |
+          set -e
+          git_repo="$(mktemp -d)"
+          cd "$git_repo"
+          git init -q -b main
+          git config user.email statutor@test
+          git config user.name "statutor test"
+          statutor init .
+          git add -A
+          git commit -q -m "init ledger"
+          mkdir -p .git/hooks
+          cp "$GITHUB_WORKSPACE/adapters/git/pre-commit" .git/hooks/pre-commit
+          chmod +x .git/hooks/pre-commit
+          # Drop the last line of the append-only DECISIONS.md and stage it.
+          python3 -c "
+          from pathlib import Path
+          p = Path('DECISIONS.md')
+          lines = p.read_text().splitlines(keepends=True)
+          p.write_text(''.join(lines[:-1]))
+          "
+          git add DECISIONS.md
+          set +e
+          git commit -q -m "should be rejected" 2>commit.err
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "expected the pre-commit hook to reject an append-only violation" >&2
+            cat commit.err >&2
+            exit 1
+          fi
+
+      - name: "Self-dogfood: validate the PR diff against ledger policies"
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -e
+          base_ref="$BASE_REF"
+          # Explicit refspec: actions/checkout's default refspec does not
+          # reliably populate refs/remotes/origin/<base_ref> for an arbitrary
+          # base branch name, so fetch it by name directly and verify it
+          # resolved before resetting onto it.
+          git fetch origin "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}"
+          git rev-parse --verify "origin/${base_ref}" >/dev/null
+          # Move HEAD back to the base commit but leave the index untouched:
+          # the entire PR delta now shows up as staged, exactly as it would
+          # for a local pre-commit check.
+          git reset --soft "origin/${base_ref}"
+          statutor staged .
+          # Last step of the job — no need to restore the worktree, the
+          # runner is discarded right after.

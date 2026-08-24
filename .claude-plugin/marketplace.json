@@ -1,0 +1,7 @@
+{
+  "name": "hoo-plugins",
+  "owner": { "name": "Hoo" },
+  "plugins": [
+    { "name": "statutor", "source": "./", "description": "Ledgered-repo discipline: scaffolds and enforces AGENTS.md / HANDOFF.md / DECISIONS.md / TASKS.md / plans with mutation policies." }
+  ]
+}

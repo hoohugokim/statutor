@@ -1,0 +1,7 @@
+#!/bin/sh
+# statutor git floor — install as .git/hooks/pre-commit (chmod +x), or prefer
+# the pre-commit framework entry in .pre-commit-hooks.yaml at the statutor root.
+if command -v statutor >/dev/null 2>&1; then
+  exec statutor staged "$(git rev-parse --show-toplevel)"
+fi
+exec python3 "$(git rev-parse --show-toplevel)/.statutor/statutor_core.py" staged "$(git rev-parse --show-toplevel)"

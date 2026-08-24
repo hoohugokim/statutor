@@ -1,0 +1,6 @@
+- id: statutor
+  name: statutor ledger policies (staged)
+  entry: statutor staged
+  language: python
+  pass_filenames: false
+  always_run: true

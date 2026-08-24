@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "statutor"
+version = "0.2.0"
+description = "Typed project-ledger framework for agentic repos: four planes, single-writer files, enforced mutation policies."
+requires-python = ">=3.10"
+
+[project.scripts]
+statutor = "statutor_core:main"
+statutor-doctor = "statutor_doctor:main"
+
+[tool.setuptools]
+package-dir = { "" = "core" }
+py-modules = ["statutor_core", "statutor_doctor"]

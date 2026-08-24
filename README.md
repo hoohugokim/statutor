@@ -1,0 +1,78 @@
+# statutor
+
+Typed project-ledger framework for agentic repos. A *statutor* is one who
+enacts (agent noun of *statuere*) — which is the thesis: repo instruction
+files are a state machine of typed registers, each with a mutation policy
+and exactly one writer, enforced by hooks and git, not by prose.
+
+| Plane | Files | Policy | Enforced by |
+|---|---|---|---|
+| Constitution | AGENTS.md (+ CLAUDE.md = `@AGENTS.md`) | hard cap 200 lines | hook + git floor |
+| State | HANDOFF.md | overwrite-only, ≤ 40 lines, required sections | hook + git floor |
+| State | TASKS.md | stable T-NNNN ids | doctor |
+| Log | DECISIONS.md | append-only, insertions only, supersede-never-edit | hook + git floor |
+| Plan | ROADMAP.md, plans/ → plans/archive/ (frozen) | archive immutable | hook + git floor |
+
+Plus a **bash guard** on every harness: shell writes to governed files
+(`>>`, `sed -i`, `tee`, ...) are denied — the editor tools are the audited
+path. No hand-maintained CHANGELOG.md: git log + conventional commits.
+
+## Kernel / adapter architecture
+
+    core/statutor_core.py     single-file kernel: validate() + embedded templates
+                          modes: hook | check | staged | init   (fail-open hooks)
+    core/statutor_doctor.py   drift linter (stale stamps, budgets, unarchived plans)
+    hooks/stop_doctor.py  Claude Code Stop hook: runs statutor-doctor after each
+                          turn and surfaces its WARN/ERROR lines as
+                          additionalContext — non-blocking, silent when the
+                          ledger is clean or the cwd isn't a statutor ledger at all
+    pyproject.toml        pipx install → `statutor`, `statutor-doctor` on PATH
+
+| Adapter | Mechanism | Coverage |
+|---|---|---|
+| Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
+| OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check` | in-loop (write/edit/bash)¹ |
+| Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard only² |
+| git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` on pre-commit / pre-receive | universal floor |
+| Hermes / custom (`adapters/hermes/middleware.py`) | `from statutor_core import validate` | full in-loop |
+
+¹ in-loop for write/edit/bash; `apply_patch` (opencode substitutes it for
+write/edit on GPT-5-class models) and server-namespaced MCP tool ids are
+not matched by the allowlist — git floor covers them. Subagent tool calls
+DO fire plugin hooks (verified opencode v1.18.21, 2026-08-21); the
+opposite claim (sst/opencode#5894) was a misdiagnosis, stale-closed
+2026-04-15.
+² Codex hooks are on by default since rust-v0.124.0 (2026-04-23) — the old
+`[features].codex_hooks` flag is a deprecated legacy alias, and hooks need
+a one-time trust approval (`/hooks`). PreToolUse fires for apply_patch
+too, but Codex sends edits as tool_name `apply_patch` + `{"command":
+"<patch>"}`, which the kernel doesn't parse yet — so statutor's in-loop
+coverage is the bash guard, and the git floor is mandatory there.
+
+## Install
+
+    pipx install statutor                # or: pip install -e .
+    statutor init .                      # scaffold any repo, any harness
+
+    # Claude Code (this repo doubles as the plugin):
+    /plugin marketplace add <path-or-url>
+    /plugin install statutor@hoo-plugins --scope project
+    # then: /statutor-init  /handoff  /decide  /statutor-doctor
+
+    # git floor for every repo:
+    #   .pre-commit-config.yaml → repo: <this repo>, hooks: [{id: statutor}]
+
+Per-repo policy overrides: `.statutor.yaml` (embedded defaults apply without it).
+
+## Provenance
+
+Framework doctrine distilled from: the AGENTS.md open standard
+<https://agents.md/>, Claude Code memory & hooks docs
+<https://code.claude.com/docs/en/memory>, <https://code.claude.com/docs/en/hooks>,
+Anthropic on long-running agent harnesses
+<https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents>
+and context engineering
+<https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents>,
+MADR <https://adr.github.io/madr/>, Keep a Changelog
+<https://keepachangelog.com/>, Conventional Commits
+<https://www.conventionalcommits.org/>, pre-commit <https://pre-commit.com/>.

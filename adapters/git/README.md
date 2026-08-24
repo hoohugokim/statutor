@@ -16,10 +16,9 @@ at the statutor repo root):
         rev: v0.2.0
         hooks: [ { id: statutor } ]
 
-Fallback: copy ./pre-commit into .git/hooks/. That script's own fallback
-branch (used when `statutor` isn't on PATH) shells out to
-`$(git rev-parse --show-toplevel)/.statutor/statutor_core.py` — `statutor init` never
-creates a `.statutor/` directory, so that branch only works if you vendor the
-kernel there yourself: `mkdir -p .statutor && cp <statutor checkout>/core/statutor_core.py .statutor/`.
-Prefer having `statutor` on PATH (`pipx install statutor`) so the fallback
-is never needed.
+Fallback: copy ./pre-commit into .git/hooks/. When the `statutor` CLI is
+not on PATH, that script FAILS CLOSED (exit 1 with install instructions):
+a floor that silently no-ops when its linter is missing isn't a floor, and
+vendoring a second kernel copy under .statutor/ would fork the single
+source of truth. `pipx install statutor` makes the branch unreachable;
+`git commit --no-verify` remains the explicit human override.

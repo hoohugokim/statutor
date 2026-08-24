@@ -1,7 +1,14 @@
 #!/bin/sh
 # statutor git floor — install as .git/hooks/pre-commit (chmod +x), or prefer
 # the pre-commit framework entry in .pre-commit-hooks.yaml at the statutor root.
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "statutor: not inside a git worktree." >&2
+  exit 1
+}
 if command -v statutor >/dev/null 2>&1; then
-  exec statutor staged "$(git rev-parse --show-toplevel)"
+  exec statutor staged "$top"
 fi
-exec python3 "$(git rev-parse --show-toplevel)/.statutor/statutor_core.py" staged "$(git rev-parse --show-toplevel)"
+echo "statutor: git floor installed, but the 'statutor' CLI is not on PATH." >&2
+echo "statutor: install it once with: pipx install statutor" >&2
+echo "statutor: failing closed — an absent linter must not silently skip ledger checks." >&2
+exit 1

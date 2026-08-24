@@ -6,7 +6,7 @@
 - [x] T-0003 Verify Codex hook registration format on current release (hooks.json vs `[hooks]` table); pin exact snippet in adapters/codex/README.md
 - [x] T-0004 Verify OpenCode subagent hook coverage (sst/opencode#5894) on current release; note result in adapters/opencode/README.md
 - [x] T-0005 Add SessionEnd/Stop hook to the Claude adapter running `writ-doctor` and surfacing WARNs
-- [ ] T-0006 Integrate the existing Clawd 5-hour PreToolUse HANDOFF checkpoint hook so its output passes statutor validation (sections + stamp) — hook artifact not found anywhere on disk (2026-08-24 sweep: settings.json, backups, app hooks, history); needs human re-scope or fresh design
+- [x] T-0006 Integrate the existing Clawd 5-hour PreToolUse HANDOFF checkpoint hook so its output passes statutor validation (sections + stamp) — CLOSED AS OBSOLETE 2026-08-24 (D-0013): the hook never existed on disk (full sweep: settings, backups, app hooks, history); staleness is already stop_doctor's job and every HANDOFF write is validated; build nothing without a real failure
 - [x] T-0007 Tag v0.2.0, push repo, test `/plugin marketplace add` + install flow end-to-end — DONE 2026-08-24: tag pushed & CI verified; plugin swap (marketplace re-point + statutor@hoo-plugins install) completed by human same day
 - [x] T-0008 CI (GitHub Actions): pytest + self-dogfood `statutor staged` on this repo per PR
 - [x] T-0009 writ_doctor: read budgets/sections from `.writ.yaml` instead of module constants

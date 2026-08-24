@@ -1,36 +1,34 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-24 by `pytest -q → 238 passed/8 skipped; statutor staged clean; v0.2.0 live on PyPI; plugin re-installed from this tree`
+last_verified: 2026-08-24 by `pytest -q → 238 passed/8 skipped; statutor staged clean; TASKS queue empty except human registry trio`
 
 ## Goal
-Ship statutor v0.3: published, registry placeholders in place, repo public —
-enforced ledgers on Claude Code, OpenCode, Codex, and the git floor (D-0012).
+Ship statutor v0.3: registry placeholders claimed, repo public, tagged and
+published via trusted publishing — four enforced surfaces (D-0012).
 
 ## Last verified state
-Agent queue fully drained + scope cut executed 2026-08-24: apply_patch is
-kernel-parsed (D-0011), pre-commit hook fails closed without the CLI,
-doctor filenames policy-derived, stop-hook sentinel follows renames.
-Hermes adapter DROPPED (D-0012) — four supported surfaces remain.
-T-0007 closed: v0.2.0 tagged/pushed AND plugin flow verified by human.
-v0.3 prep landed: pyproject metadata (PEP 639 MIT), LICENSE, publish.yml
-(OIDC trusted publishing, tag/version guard). Suite green; floor clean.
+Agent queue EMPTY 2026-08-24. Everything agent-side is done and pushed:
+apply_patch parsed by the kernel (D-0011), pre-commit fails closed, doctor
+filenames policy-derived, stop-hook sentinel follows renames, Hermes
+dropped (D-0012), T-0006 closed wontfix (D-0013 — no periodic checkpoint
+mechanism; staleness is the doctor's job). v0.3 prep landed (metadata,
+LICENSE, publish.yml). T-0007 closed incl. human plugin swap.
 
 ## Next action
-Human-only tail, per plans/registry-claims.md: T-0016 npm placeholder,
-T-0017 crates placeholder, T-0018 flip repo public (+optional org/domains).
-One-time PyPI UI step already done? If not: register pending trusted
-publisher (hoohugokim/statutor, workflow publish.yml). Then archive that
-plan and cut v0.3: bump version → tag v0.3.0 → push (publish.yml does the
-rest; 0.2.0 is burned).
+Human only: T-0016 npm + T-0017 crates placeholders and T-0018 repo
+public per plans/registry-claims.md; then archive that plan, bump
+pyproject to 0.3.0, commit, tag v0.3.0, push — publish.yml verifies
+tag≡version and publishes OIDC-tokenless. Human AGENTS.md/ROADMAP.md
+edits were still uncommitted at this writing — commit or discard them.
 
 ## Gotchas
-One doctor WARN expected until plans/registry-claims.md archives (its own
-done-condition names all four registry tasks). ROADMAP/AGENTS.md edits are
-the human's in-flight changes — never stage them blindly. No global CLI
-install locally (PEP 668); local floor is the in-repo shim. Tests via
+One doctor WARN stands until plans/registry-claims.md archives (its own
+done-condition names all four registry tasks). No global CLI install
+locally (PEP 668); local floor is the in-repo shim. Tests via
 /opt/homebrew/bin/pytest; two doctor tests skip without PyYAML locally.
-DECISIONS.md keeps its writ header marker.
+DECISIONS.md keeps its writ header marker. ROADMAP promotion intents
+(npm plugin, Rust floor) need D-records before any code exists.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of

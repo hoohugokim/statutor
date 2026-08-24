@@ -9,11 +9,12 @@ Entry modes (all share the same validate() core):
   statutor hook           Claude Code / Codex CLI hook protocol:
                           stdin JSON in, permissionDecision JSON out.
                           (Codex's PreToolUse mirrors Claude's schema and
-                          also fires for apply_patch, but sends edits as
-                          tool_input {"command": "<patch text>"} — this
-                          validate() only understands bash/write/edit, so
-                          apply_patch falls through unhandled; the git
-                          floor is mandatory there. See adapters/codex/.)
+                          also fires for apply_patch, sending edits as
+                          tool_input {"command": "<apply_patch envelope>"}.
+                          validate() parses that envelope — see
+                          guard_apply_patch(); unknown payload shapes fall
+                          through unhandled, and the git floor stays
+                          mandatory as the backstop. See adapters/codex/.)
   statutor check TOOL JSON [CWD]
                           Generic shim mode for OpenCode / Hermes / tests.
                           exit 0 = allow, exit 2 = deny (reason on stderr).
@@ -110,6 +111,8 @@ def validate(tool: str, payload: dict, cwd: str, policy: dict | None = None) -> 
 
     if tool == "bash":
         return guard_bash(payload.get("command", ""), policy)
+    if tool == "apply_patch":
+        return guard_apply_patch(payload, cwd, policy)
     if tool not in ("write", "edit"):
         return None
 
@@ -184,6 +187,159 @@ def guard_bash(command: str, policy: dict) -> str | None:
         return (f"shell write touching governed file(s) {hit} denied: direct shell "
                 "mutations bypass policy validation. Use the editor tool, or set "
                 "bash_guard: false in .statutor.yaml if this was a false positive.")
+    return None
+
+
+# --------------------------------------------------------------------------
+# apply_patch envelope (Codex / opencode GPT-5-class edit path)
+# --------------------------------------------------------------------------
+
+_AP_HEADER_RE = re.compile(r"^\*\*\* (Update File|Add File|Delete File|Move to):\s*(.+?)\s*$")
+_AP_OPS = {"update file": "update", "add file": "add", "delete file": "delete"}
+
+
+def _patch_targets(text: str) -> list[dict]:
+    """Split an apply_patch envelope into per-file ops, in document order.
+
+    Each target: {op, path, move_to, plus, minus, content} where plus/minus
+    are the raw hunk lines and content is an Add File's decoded body.
+    Context (" "), hunk anchors (@@), and anything before *** Begin Patch
+    are ignored — this is a policy scan, not a patch applier.
+    """
+    targets: list[dict] = []
+    cur: dict | None = None
+    inside = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "*** Begin Patch":
+            inside = True
+            continue
+        if stripped == "*** End Patch":
+            break
+        if not inside:
+            continue
+        m = _AP_HEADER_RE.match(line)
+        if m:
+            kind, path = m.group(1).lower(), m.group(2)
+            if kind == "move to":
+                if cur is not None:
+                    cur["move_to"] = path
+                continue
+            cur = {"op": _AP_OPS[kind], "path": path, "move_to": None,
+                   "plus": [], "minus": [], "content": []}
+            targets.append(cur)
+            continue
+        if cur is None:
+            continue
+        if line.startswith("+"):
+            cur["plus"].append(line)
+            cur["content"].append(line[1:])
+        elif line.startswith("-"):
+            cur["minus"].append(line)
+    return targets
+
+
+def _resolve_patch_path(path: str, cwd: str) -> str:
+    """Policy-relative form of a patch path (same resolution write/edit get:
+    absolute-ize against cwd, then relativize back)."""
+    return os.path.relpath(os.path.abspath(os.path.join(cwd, path)), os.path.abspath(cwd))
+
+
+def _size_reason(rel: str, kind: str, rule: dict, content: str) -> str | None:
+    """Cap/sections denial for a fully-known body (write tool and Add File)."""
+    n = content.count("\n") + 1
+    if kind == "constitution":
+        hard = int(rule.get("hard_max_lines", 200))
+        if n > hard:
+            return (f"{rel} would be {n} lines (hard cap {hard}). The constitution "
+                    "carries only what the repo cannot say itself.")
+    elif kind == "overwrite_bounded":
+        cap = int(rule.get("max_lines", 40))
+        if n > cap:
+            return (f"{rel} would be {n} lines (cap {cap}). HANDOFF is a shift-change "
+                    "note, not a log: overwrite, compress, drop history.")
+        missing = [s for s in rule.get("required_sections", []) if s not in content]
+        if missing:
+            return (f"{rel} is missing required sections: {', '.join(missing)}. "
+                    "A handoff without these fields strands the next session.")
+    return None
+
+
+def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
+    """Policy-check an apply_patch envelope.
+
+    Codex PreToolUse delivers edits as tool_name apply_patch with
+    tool_input {"command": "<envelope>"}; opencode substitutes apply_patch
+    for write/edit on GPT-5-class models. Semantics mirror the other layers:
+
+      * any touch of a frozen path is denied (arrival INTO plans/archive/
+        stays allowed, matching the staged rename rule);
+      * Delete File on a governed constitution/overwrite_bounded/append_only
+        path is denied wholesale — records are superseded, never removed
+        (state-policy files stay deletable, matching the bash guard's gap);
+      * Add File on a sized policy runs the full cap + required-sections
+        check (the body is fully known);
+      * Update File on append_only denies any deleting/modifying hunk line;
+        on sized policies it estimates the resulting line count from the
+        on-disk file plus adds-minus-dels (required sections cannot be
+        verified from a partial diff — the git floor covers that).
+
+    Unknown payload shapes fall through silently (None): parsing here must
+    never be load-bearing for enforcement the git floor also provides.
+    """
+    text = payload.get("command", payload.get("patch", ""))
+    if not isinstance(text, str) or "*** Begin Patch" not in text:
+        return None
+
+    for t in _patch_targets(text):
+        rel = _resolve_patch_path(t["path"], cwd)
+        rule = _match_rule(rel, policy)
+        kind = rule.get("policy", "") if rule else ""
+
+        if t["op"] == "delete":
+            if kind == "frozen":
+                return f"{rel} is frozen (archived plan). Archived records are immutable."
+            if kind in ("constitution", "overwrite_bounded", "append_only"):
+                return (f"{rel} is governed ({kind}): apply_patch cannot delete it. "
+                        "Records are superseded, never removed.")
+            continue
+
+        move_rel = _resolve_patch_path(t["move_to"], cwd) if t["move_to"] else None
+        if move_rel is not None and kind == "frozen":
+            return (f"{rel} is frozen (archived plan). Moving a record OUT of "
+                    "the archive is denied.")
+
+        if t["op"] == "add":
+            if kind == "frozen":
+                return f"{rel} is frozen (archived plan). Archived records are immutable."
+            if rule is None:
+                continue
+            reason = _size_reason(rel, kind, rule, "\n".join(t["content"]))
+            if reason:
+                return reason
+            continue
+
+        # update
+        if kind == "frozen":
+            return f"{rel} is frozen (archived plan). Archived records are immutable."
+        if rule is None:
+            continue
+        dels, adds = len(t["minus"]), len(t["plus"])
+        if kind == "append_only":
+            if dels:
+                return (f"{rel} is append-only, but the patch deletes/modifies "
+                        f"{dels} line(s). Append superseding records instead.")
+            continue
+        if kind in ("constitution", "overwrite_bounded") and (adds or dels):
+            cap_key = "hard_max_lines" if kind == "constitution" else "max_lines"
+            cap = int(rule.get(cap_key, 200))
+            try:
+                cur_n = open(os.path.join(cwd, rel), encoding="utf-8").read().count("\n") + 1
+            except OSError:
+                cur_n = None  # unreadable/unmapped path: let the floor judge
+            if cur_n is not None and cur_n + adds - dels > cap:
+                est = cur_n + adds - dels
+                return (f"{rel} would grow to ~{est} lines (cap {cap}).")
     return None
 
 

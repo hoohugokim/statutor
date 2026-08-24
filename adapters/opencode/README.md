@@ -17,14 +17,19 @@
    tool, so the hook correctly fired with `tool: "bash"` — and was closed
    by the stale bot on 2026-04-15, never by a fix.
 
-   The floor is needed for gaps the `tool.execute.before` allowlist in
-   `statutor.ts` cannot close:
-   - `apply_patch`: on GPT-5-class models opencode drops `write`/`edit`
-     from the tool set and substitutes `apply_patch`
-     ([`tool/registry.ts`](https://github.com/anomalyco/opencode/blob/v1.18.21/packages/opencode/src/tool/registry.ts#L297)),
-     which `statutor.ts`'s `["write","edit","bash"]` allowlist does not match.
+   The floor is still recommended for gaps the `tool.execute.before`
+   allowlist in `statutor.ts` cannot close:
    - MCP tools: their ids are server-namespaced, so name-based filtering
      never matches them.
+   - Partial-diff blind spots: an apply_patch Update File's required
+     sections cannot be verified from a partial diff, and its resulting
+     line count is only estimated from the on-disk file plus adds-minus-
+     dels — the floor judges the final staged blob exactly.
    - No agent identity: the hook input is only
      `{ tool, sessionID, callID }` — a plugin can't tell primary agent
      from subagent, only correlate by `sessionID`.
+
+   `apply_patch` itself is covered in-loop since T-0011: the allowlist
+   includes it and the kernel parses the `*** Begin Patch` envelope
+   (frozen paths, Delete File of governed records, append-only deletions,
+   and cap/sections on Add File).

@@ -701,6 +701,182 @@ def test_bash_guard_scans_whole_multiline_command():
 
 
 # --------------------------------------------------------------------------
+# guard_apply_patch (AP-01..AP-18) — Codex / opencode GPT-5-class edit path
+# --------------------------------------------------------------------------
+
+def envelope(*sections: str) -> dict:
+    return {"command": "*** Begin Patch\n" + "\n".join(sections) + "\n*** End Patch"}
+
+
+def ap(tmp_path, *sections: str) -> str | None:
+    return statutor_core.validate("apply_patch", envelope(*sections), str(tmp_path), POLICY)
+
+
+@pytest.mark.parametrize("command", [
+    "sed -i s/a/b/ DECISIONS.md",              # a bash command, not an envelope
+    "*** Update File: DECISIONS.md\n-x\n+y",   # header without Begin Patch
+])
+def test_apply_patch_unknown_payload_falls_through(tmp_path, command):
+    """Non-envelope payloads fall through silently — the git floor covers
+    whatever shape arrives; parsing here must never guess."""
+    assert statutor_core.validate("apply_patch", {"command": command}, str(tmp_path), POLICY) is None
+
+
+def test_apply_patch_missing_command_key_falls_through(tmp_path):
+    assert statutor_core.validate("apply_patch", {}, str(tmp_path), POLICY) is None
+
+
+def test_apply_patch_non_string_command_falls_through(tmp_path):
+    assert statutor_core.validate("apply_patch", {"command": 42}, str(tmp_path), POLICY) is None
+
+
+def test_apply_patch_non_governed_update_passes(tmp_path):
+    assert ap(tmp_path, "*** Update File: src/app.py\n@@\n old\n+new") is None
+
+
+def test_apply_patch_append_only_pure_addition_ok(tmp_path):
+    (tmp_path / "DECISIONS.md").write_text("## D-0001\nfirst\n", encoding="utf-8")
+    assert ap(tmp_path, "*** Update File: DECISIONS.md\n@@\n first\n+second") is None
+
+
+def test_apply_patch_append_only_deletion_denied(tmp_path):
+    result = ap(tmp_path, "*** Update File: DECISIONS.md\n@@\n-first\n+first changed")
+    assert result is not None
+    assert "append-only" in result
+    assert "deletes/modifies 1 line(s)" in result
+
+
+def test_apply_patch_append_only_add_file_ok(tmp_path):
+    assert ap(tmp_path, "*** Add File: docs/DRAFT.md\n+draft notes") is None
+
+
+@pytest.mark.parametrize("path,policy_name", [
+    ("DECISIONS.md", "append_only"),
+    ("HANDOFF.md", "overwrite_bounded"),
+    ("AGENTS.md", "constitution"),
+])
+def test_apply_patch_delete_governed_denied(tmp_path, path, policy_name):
+    result = ap(tmp_path, f"*** Delete File: {path}")
+    assert result is not None
+    assert f"governed ({policy_name})" in result
+    assert "superseded, never removed" in result
+
+
+def test_apply_patch_delete_state_file_passes_quirk(tmp_path):
+    """State-plane files stay deletable everywhere (bash guard and staged
+    floor share this gap by design); apply_patch matches them, not stricter."""
+    assert ap(tmp_path, "*** Delete File: TASKS.md") is None
+
+
+@pytest.mark.parametrize("section", [
+    "*** Add File: plans/archive/new.md\n+x",
+    "*** Update File: plans/archive/a1.md\n@@\n-old\n+new",
+    "*** Delete File: plans/archive/a1.md",
+])
+def test_apply_patch_frozen_touches_denied(tmp_path, section):
+    (tmp_path / "plans" / "archive").mkdir(parents=True)
+    result = ap(tmp_path, section)
+    assert result is not None
+    assert "is frozen (archived plan)" in result
+
+
+def test_apply_patch_move_out_of_archive_denied(tmp_path):
+    (tmp_path / "plans" / "archive").mkdir(parents=True)
+    result = ap(tmp_path,
+                "*** Update File: plans/archive/a1.md",
+                "*** Move to: plans/a1.md")
+    assert result is not None
+    assert "frozen" in result
+    assert "OUT of the archive" in result
+
+
+def test_apply_patch_move_into_archive_allowed(tmp_path):
+    (tmp_path / "plans").mkdir()
+    assert ap(tmp_path,
+              "*** Update File: plans/p1.md",
+              "*** Move to: plans/archive/p1.md") is None
+
+
+def test_apply_patch_add_handoff_over_cap_denied(tmp_path):
+    body = "\n".join(f"+l{i}" for i in range(41))
+    result = ap(tmp_path, f"*** Add File: HANDOFF.md\n{body}")
+    assert result is not None
+    assert "would be 41 lines (cap 40)" in result
+
+
+def test_apply_patch_add_handoff_missing_sections_denied(tmp_path):
+    result = ap(tmp_path, "*** Add File: HANDOFF.md\n+# HANDOFF\n+unfilled")
+    assert result is not None
+    assert "missing required sections" in result
+    assert "## Goal" in result
+
+
+def test_apply_patch_add_compliant_handoff_ok(tmp_path):
+    body = handoff()
+    plus = "\n".join("+" + l for l in body.splitlines())
+    assert ap(tmp_path, f"*** Add File: HANDOFF.md\n{plus}") is None
+
+
+def test_apply_patch_add_agents_over_hard_cap_denied(tmp_path):
+    body = "\n".join(f"+x{i}" for i in range(201))
+    result = ap(tmp_path, f"*** Add File: AGENTS.md\n{body}")
+    assert result is not None
+    assert "would be 201 lines (hard cap 200)" in result
+
+
+def test_apply_patch_update_estimated_growth_over_cap_denied(tmp_path):
+    (tmp_path / "AGENTS.md").write_text(lines(195), encoding="utf-8")
+    plus = "\n".join(f"+more{i}" for i in range(10))
+    result = ap(tmp_path, f"*** Update File: AGENTS.md\n@@\n{plus}")
+    assert result is not None
+    assert "would grow to ~205 lines (cap 200)" in result
+
+
+def test_apply_patch_update_estimated_growth_within_cap_ok(tmp_path):
+    (tmp_path / "AGENTS.md").write_text(lines(195), encoding="utf-8")
+    assert ap(tmp_path, "*** Update File: AGENTS.md\n@@\n+one\n+two") is None
+
+
+def test_apply_patch_update_unreadable_target_skips_estimate(tmp_path):
+    """Cap estimation needs the on-disk file; when it can't be read the
+    estimate is skipped (the floor judges the final staged blob)."""
+    plus = "\n".join("+x" for _ in range(300))
+    assert ap(tmp_path, f"*** Update File: AGENTS.md\n@@\n{plus}") is None
+
+
+def test_apply_patch_multiple_targets_first_denial_wins(tmp_path):
+    (tmp_path / "plans" / "archive").mkdir(parents=True)
+    result = ap(tmp_path,
+                "*** Update File: DECISIONS.md\n@@\n first\n+ok",
+                "*** Delete File: plans/archive/a1.md")
+    assert result is not None
+    assert "frozen" in result
+
+
+def test_apply_patch_content_lines_starting_with_plus_star_parsed_as_content():
+    targets = statutor_core._patch_targets(
+        "*** Begin Patch\n*** Add File: x.md\n+*** not a header\n*** End Patch")
+    assert len(targets) == 1
+    assert targets[0]["content"] == ["*** not a header"]
+
+
+def test_check_mode_applies_apply_patch_policy(tmp_path):
+    payload = json.dumps(envelope("*** Delete File: DECISIONS.md"))
+    result = run_kernel(["check", "apply_patch", payload, str(tmp_path)])
+    assert result.returncode == 2
+    assert "[statutor]" in result.stderr
+
+
+def test_hook_mode_deny_json_for_apply_patch(tmp_path):
+    event = {"tool_name": "apply_patch", "tool_input": envelope("*** Delete File: DECISIONS.md"),
+             "cwd": str(tmp_path)}
+    result = run_kernel(["hook"], input_str=json.dumps(event))
+    assert result.returncode == 0
+    data = _hook_deny_json(result)
+    assert "governed (append_only)" in data["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+# --------------------------------------------------------------------------
 # hook mode (K-79..K-87) — must fail open
 # --------------------------------------------------------------------------
 

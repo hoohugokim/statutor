@@ -21,18 +21,19 @@ Three things to know:
    hooks with `allow_managed_hooks_only = true` in requirements.toml.
 2. PreToolUse fires for more than Bash — also `apply_patch` (matcher
    aliases `Write`/`Edit`), `spawn_agent` (alias `Agent`), MCP tools, and
-   other local function tools; not for hosted tools like web search. BUT
-   statutor's in-loop coverage on Codex is still the BASH GUARD ONLY: Codex
-   sends file edits as tool_name `apply_patch` with tool_input
+   other local function tools; not for hosted tools like web search.
+   Codex sends file edits as tool_name `apply_patch` with tool_input
    `{"command": "<apply_patch envelope text>"}` — not Claude's
    `{file_path, content}` — and matcher aliases deliberately don't change
-   the payload seen by hook processes. `validate()` in core/statutor_core.py
-   only understands bash/write/edit, so apply_patch falls through and
-   returns `None`. File-mutation policies on Codex are therefore enforced
-   by the GIT FLOOR (adapters/git/), which is mandatory here, not
-   optional. (Lifting this needs a kernel change: parse the
-   `*** Update File:` / `*** Add File:` / `*** Delete File:` headers out
-   of `tool_input.command`.)
+   the payload seen by hook processes. Since T-0011, `validate()` in
+   core/statutor_core.py parses that envelope (`guard_apply_patch`):
+   frozen paths are untouchable (arrival INTO the archive still allowed),
+   Delete File on a governed constitution/overwrite_bounded/append_only
+   path is denied wholesale, Add File gets the full cap + required-sections
+   check, and Update File denies append-only deletions and estimates the
+   resulting line count. Residual blind spots — required sections on an
+   Update File partial diff, and MCP tools — are covered by the GIT FLOOR
+   (adapters/git/), which stays mandatory here.
 3. Registration: BOTH `hooks.json` and an inline `[hooks]` table in
    config.toml are read, discovered per config layer (`~/.codex/` and
    `<repo>/.codex/`). Use exactly ONE per layer — a layer with both loads
@@ -55,10 +56,10 @@ hooks.json in the same layer):
     timeout = 30
     statusMessage = "statutor policy check"
 
-`matcher` is a regex over the tool name and its aliases; widen it to
-`"^(Bash|apply_patch)$"` only after the kernel learns the apply_patch
-payload — until then statutor is invoked on that traffic and silently
-returns nothing.
+`matcher` is a regex over the tool name and its aliases. Since T-0011 the
+kernel parses apply_patch envelopes, so widening to `"^(Bash|apply_patch)$"`
+gives real in-loop file-mutation coverage; tools outside both patterns
+(e.g. MCP ids) still never reach statutor — the git floor covers them.
 
 Doctrine ports for free: Codex reads AGENTS.md natively (32 KiB combined
 cap — another reason the constitution stays small; cap unverified in

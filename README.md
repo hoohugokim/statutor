@@ -32,22 +32,25 @@ path. No hand-maintained CHANGELOG.md: git log + conventional commits.
 |---|---|---|
 | Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
 | OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check` | in-loop (write/edit/bash)¹ |
-| Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard only² |
+| Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` on pre-commit / pre-receive | universal floor |
 | Hermes / custom (`adapters/hermes/middleware.py`) | `from statutor_core import validate` | full in-loop |
 
-¹ in-loop for write/edit/bash; `apply_patch` (opencode substitutes it for
-write/edit on GPT-5-class models) and server-namespaced MCP tool ids are
-not matched by the allowlist — git floor covers them. Subagent tool calls
+¹ in-loop for write/edit/bash/apply_patch; the kernel parses apply_patch
+envelopes (T-0011), with two partial-diff blind spots: required sections
+on an Update File and server-namespaced MCP tool ids — the git floor
+covers both. Subagent tool calls
 DO fire plugin hooks (verified opencode v1.18.21, 2026-08-21); the
 opposite claim (sst/opencode#5894) was a misdiagnosis, stale-closed
 2026-04-15.
 ² Codex hooks are on by default since rust-v0.124.0 (2026-04-23) — the old
 `[features].codex_hooks` flag is a deprecated legacy alias, and hooks need
-a one-time trust approval (`/hooks`). PreToolUse fires for apply_patch
-too, but Codex sends edits as tool_name `apply_patch` + `{"command":
-"<patch>"}`, which the kernel doesn't parse yet — so statutor's in-loop
-coverage is the bash guard, and the git floor is mandatory there.
+a one-time trust approval (`/hooks`). Codex sends edits as tool_name
+`apply_patch` + `{"command":
+"<envelope>"}`, which `guard_apply_patch()` parses (frozen/delete/
+append-only/cap checks; see adapters/codex/). Residual gaps: MCP tools
+and Update-File section checks — so the git floor remains
+mandatory there.
 
 ## Install
 

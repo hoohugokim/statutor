@@ -1,12 +1,35 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "statutor"
 version = "0.2.0"
 description = "Typed project-ledger framework for agentic repos: four planes, single-writer files, enforced mutation policies."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Hoo" }]
 requires-python = ">=3.10"
+keywords = ["agents", "claude", "opencode", "codex", "hermes", "ledger",
+            "governance", "hooks", "pre-commit", "adr", "decision-records"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/hoohugokim/statutor"
+Repository = "https://github.com/hoohugokim/statutor"
+Issues = "https://github.com/hoohugokim/statutor/issues"
 
 [project.scripts]
 statutor = "statutor_core:main"

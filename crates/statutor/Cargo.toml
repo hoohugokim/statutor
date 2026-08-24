@@ -1,0 +1,21 @@
+[package]
+name = "statutor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+description = "Conformance-gated staged-mode ledger floor: a static statutor-staged binary for server-side pre-receive hooks. Policy kernel stays canonical in Python; this twin exists only while CI proves behavioral equivalence."
+repository = "https://github.com/hoohugokim/statutor"
+keywords = ["git", "pre-receive", "governance", "ledger", "agents"]
+categories = ["development-tools"]
+
+[lib]
+name = "statutor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "statutor-staged"
+path = "src/main.rs"
+
+[dependencies]
+yaml-rust2 = "0.10"

@@ -17,8 +17,7 @@ jobs:
           # One leg exercises the real .statutor.yaml parse path (PyYAML present);
           # the rest cover the stdlib-only fallback the kernel promises.
           - python-version: "3.14"
-            pyyaml: true
-    steps:
+            pyyaml: true    steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -145,3 +144,26 @@ jobs:
           statutor staged .
           # Last step of the job — no need to restore the worktree, the
           # runner is discarded right after.
+
+  rust-conformance:
+    name: rust floor ≡ python kernel (D-0014 conformance gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the statutor-staged binary (locked)
+        run: cargo build --locked --release --manifest-path crates/statutor/Cargo.toml
+
+      - name: Rust unit tests
+        run: cargo test --release --manifest-path crates/statutor/Cargo.toml
+
+      - name: Differential conformance — Python ≡ Rust on every scenario
+        run: |
+          python -m pip install --upgrade pip pytest pyyaml
+          python -m pytest -q tests/test_conformance_rust.py

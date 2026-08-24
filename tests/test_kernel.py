@@ -1324,16 +1324,13 @@ def test_staged_repo_local_statutor_yaml_governed_empty(tmp_path, capsys):
 
 
 @git_required
-def test_staged_color_ui_always_breaks_append_only_detection_quirk(ledger_repo, capsys, monkeypatch, tmp_path):
-    """statutor_core._git() spawns `git` with no explicit env=, so it inherits
-    whatever GIT_CONFIG_GLOBAL/GIT_CONFIG_NOSYSTEM this process happens to
-    have. Simulating a developer's real ~/.gitconfig with `color.ui =
-    always`: `git diff --cached -U0` starts colorizing, so its deletion
-    lines begin with an ANSI escape instead of "-", and run_staged's
-    `l.startswith("-")` filter (statutor_core.py) never sees them — the
-    append-only floor is silently defeated. This PINS that current kernel
-    gap (not fixed here — see DECISIONS.md / HANDOFF.md); fixing it needs
-    statutor_core._git() to pass `-c color.ui=false` or `--no-color`."""
+def test_staged_color_ui_always_config_still_detects_deletions(ledger_repo, capsys, monkeypatch, tmp_path):
+    """statutor_core._git() spawns `git -c color.ui=false ...`, so a real
+    ~/.gitconfig with `color.ui = always` cannot ANSI-colorize the
+    `git diff --cached -U0` output: deletion lines keep their "-" prefix and
+    the append-only floor keeps catching them (regression: the pre-fix
+    kernel silently passed a real deletion under this config; fixed alongside
+    the Rust port so both kernels ship corrected behavior, D-0014)."""
     colorful_gitconfig = tmp_path / "colorful.gitconfig"
     colorful_gitconfig.write_text("[color]\n\tui = always\n", encoding="utf-8")
     path = ledger_repo / "DECISIONS.md"
@@ -1342,8 +1339,9 @@ def test_staged_color_ui_always_breaks_append_only_detection_quirk(ledger_repo, 
     git(ledger_repo, "add", "DECISIONS.md")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(colorful_gitconfig))
     code = statutor_core.run_staged(str(ledger_repo))
-    capsys.readouterr()
-    assert code == 0  # BUG: a real deletion goes undetected under this config
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "append-only, but staged diff deletes/modifies 1 line(s)." in out
 
 
 @git_required

@@ -387,8 +387,11 @@ def run_check(argv: list[str]) -> int:
 # --------------------------------------------------------------------------
 
 def _git(cwd: str, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True,
-                          text=True, check=False).stdout
+    # -c color.ui=false pins machine-readable output: a user gitconfig with
+    # color.ui=always would otherwise ANSI-colorize diff lines, and the
+    # append-only scan (startswith("-")) would silently stop seeing deletions.
+    return subprocess.run(["git", "-c", "color.ui=false", *args], cwd=cwd,
+                          capture_output=True, text=True, check=False).stdout
 
 
 def run_staged(cwd: str) -> int:

@@ -1,24 +1,27 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-23 by `/opt/homebrew/bin/pytest -q in ~/workbench/statutor (203p/6s)`
+last_verified: 2026-08-23 by `CI green on push run 32682110629's successor + PR #1 checks (all legs)`
 
 ## Goal
 Ship statutor v0.3: CI-verified, published, plugin-installable on all five adapters.
 
 ## Last verified state
-Rename writ→statutor executed (D-0009/D-0010, T-0014): repo lives at
-~/workbench/statutor; dist/CLI `statutor`, doctor `statutor-doctor`, policy file
-`.statutor.yaml`, prefixes `[statutor]`/`STATUTOR`, plugin statutor@hoo-plugins.
-Suite green post-rename: 203 passed/6 skipped (PyYAML-absence skips; the pixi
-py3.12+pyyaml leg runs all 209). Old tree at ~/workbench/Writ/writ retired
-UNMODIFIED as the pre-rename snapshot. git initialized with a local pre-commit
-floor shim; remote: github.com/hoohugokim/statutor (private).
+Rename writ→statutor executed (D-0009/D-0010, T-0014); repo at
+~/workbench/statutor, remote github.com/hoohugokim/statutor (PRIVATE), main
+pushed. CI PROVEN: first run caught a real pyyaml=false bug (pristine-scaffold
+.statutor.yaml tripping the unapplied-policy WARN → Stop hook spoke); fixed in
+3f491db; second run green on all four legs. PR #1 (chore: .gitignore) proved
+the pull_request self-dogfood step end-to-end (`statutor staged` over the PR
+delta, all legs) — T-0008 closed. Local: 204 passed/6 skipped; 210/0 with
+PyYAML. Git floor live on this repo (.git/hooks shim): rejected a staged
+DECISIONS.md deletion in anger. Old writ tree retired UNMODIFIED.
 
 ## Next action
-Human claims PyPI `statutor` (+ npm/crates placeholders) TODAY — repo stays
-private until claimed, then flip public (`gh repo edit --visibility public`).
-Reinstall the Claude plugin from the new path. Then T-0007 rehearsal.
+Human: (1) merge PR #1 (merge was classifier-blocked for the agent);
+(2) claim PyPI `statutor` + npm/crates placeholders TODAY, then flip the repo
+public (`gh repo edit hoohugokim/statutor --visibility public`);
+(3) reinstall the Claude plugin from ~/workbench/statutor. Then T-0007.
 
 ## Gotchas
 PyPI is first-come; do not announce before claiming. The session's installed

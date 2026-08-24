@@ -8,7 +8,7 @@
 - [x] T-0005 Add SessionEnd/Stop hook to the Claude adapter running `writ-doctor` and surfacing WARNs
 - [ ] T-0006 Integrate the existing Clawd 5-hour PreToolUse HANDOFF checkpoint hook so its output passes statutor validation (sections + stamp)
 - [ ] T-0007 Tag v0.2.0, push repo, test `/plugin marketplace add` + install flow end-to-end
-- [ ] T-0008 CI (GitHub Actions): pytest + self-dogfood `statutor staged` on this repo per PR
+- [x] T-0008 CI (GitHub Actions): pytest + self-dogfood `statutor staged` on this repo per PR
 - [x] T-0009 writ_doctor: read budgets/sections from `.writ.yaml` instead of module constants
 - [ ] T-0010 Investigate loading statutor doctrine into Hermes Agent via its skills (agentskills.io format); enforcement there stays git-floor-only until a hook surface is confirmed
 - [ ] T-0011 Close the apply_patch gap: extend adapters/opencode/statutor.ts allowlist and decide kernel handling of Codex apply_patch `{command: <patch>}` payloads (git floor covers meanwhile)

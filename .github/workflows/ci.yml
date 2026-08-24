@@ -17,7 +17,8 @@ jobs:
           # One leg exercises the real .statutor.yaml parse path (PyYAML present);
           # the rest cover the stdlib-only fallback the kernel promises.
           - python-version: "3.14"
-            pyyaml: true    steps:
+            pyyaml: true
+    steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:

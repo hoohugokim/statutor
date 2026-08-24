@@ -16,7 +16,7 @@ Entry modes (all share the same validate() core):
                           through unhandled, and the git floor stays
                           mandatory as the backstop. See adapters/codex/.)
   statutor check TOOL JSON [CWD]
-                          Generic shim mode for OpenCode / Hermes / tests.
+                          Generic shim mode for OpenCode / custom harnesses / tests.
                           exit 0 = allow, exit 2 = deny (reason on stderr).
   statutor staged [CWD]   Git floor: validate staged changes (pre-commit).
                           exit 1 on violations.
@@ -366,7 +366,7 @@ def run_hook() -> int:
 
 
 # --------------------------------------------------------------------------
-# entry: check (generic shim for OpenCode / Hermes / tests)
+# entry: check (generic shim for OpenCode / custom harnesses / tests)
 # --------------------------------------------------------------------------
 
 def run_check(argv: list[str]) -> int:

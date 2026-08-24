@@ -34,8 +34,7 @@ path. No hand-maintained CHANGELOG.md: git log + conventional commits.
 | OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check` | in-loop (write/edit/bash)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` on pre-commit / pre-receive | universal floor |
-| Hermes (`adapters/hermes/statutor-plugin/`) | plugin `pre_tool_call` → blocking directive | full in-loop |
-| Hermes / custom (`adapters/hermes/middleware.py`) | `from statutor_core import validate` | full in-loop |
+| Custom harnesses (`statutor check`, or import `validate`) | embed in your own tool dispatch | full in-loop |
 
 ¹ in-loop for write/edit/bash/apply_patch; the kernel parses apply_patch
 envelopes (T-0011), with two partial-diff blind spots: required sections

@@ -11,7 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Hoo" }]
 requires-python = ">=3.10"
-keywords = ["agents", "claude", "opencode", "codex", "hermes", "ledger",
+keywords = ["agents", "claude", "opencode", "codex", "ledger",
             "governance", "hooks", "pre-commit", "adr", "decision-records"]
 classifiers = [
     "Development Status :: 4 - Beta",

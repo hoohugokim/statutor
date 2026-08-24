@@ -1,7 +1,0 @@
-name: statutor
-version: "0.1.0"
-description: "statutor ledger policies for Hermes Agent: in-loop mutation-policy enforcement via the kernel's validate() core."
-author: "statutor"
-
-hooks:
-  - pre_tool_call

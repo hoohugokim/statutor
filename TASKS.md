@@ -19,7 +19,7 @@
 - [ ] T-0016 Publish honest npm placeholder `statutor` 0.0.1 pointing at PyPI + this repo
 - [ ] T-0017 Publish honest crates.io placeholder `statutor` 0.0.1 (lib crate, doc-comment reservation)
 - [ ] T-0018 After T-0015: flip repo public (`gh repo edit hoohugokim/statutor --visibility public`); optionally claim GitHub org + statutor.dev
-- [ ] T-0019 Publish real npm package `statutor` 0.1.0 (D-0014): adapters/opencode packaging, README install story (`"plugin": ["statutor"]`), pack + scratch-load verification; human runs publish
+- [x] T-0019 Publish real npm package `statutor` 0.1.0 (D-0014): adapters/opencode packaging, README install story (`"plugin": ["statutor"]`), pack + scratch-load verification; human runs publish — AGENT SIDE DONE 2026-08-24: tarball audited; E2E proven in scratch project (config-referenced node_modules load → bash-guard denial reaches the model as tool result); publish = T-0022
 - [ ] T-0020 Rust staged-mode floor crate `statutor` (bin `statutor-staged`, yaml-rust2): parity with post-fix run_staged semantics — incl. kernel `_git()` gaining `-c color.ui=false` and un-pinning the quirk test
 - [ ] T-0021 Conformance harness (D-0014 license): scripts/gen_staged_fixtures.py (~30 fixtures from K-95..K-118 families), tests/test_conformance_rust.py differential runner, CI rust leg
 - [ ] T-0022 Human publish flows: npm publish after T-0019 green; cargo publish only after the CI rust conformance leg is green

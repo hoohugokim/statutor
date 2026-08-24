@@ -1,7 +1,21 @@
 # statutor × OpenCode
 
-1. `pipx install statutor` (or `pip install -e <statutor checkout>`).
-2. Copy `statutor.ts` into your project's OpenCode plugin directory.
+1. `pipx install statutor` (or `pip install -e <statutor checkout>`) — the
+   adapter shells out to the Python kernel CLI; without it the plugin is
+   a no-op.
+2. Install the adapter itself:
+
+   ```jsonc
+   // opencode.json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugin": ["statutor"]          // pin with "statutor@0.1.0"
+   }
+   ```
+
+   then restart opencode (config is read at startup). File-copy fallback,
+   no npm needed: copy `statutor.ts` into your project's
+   `.opencode/plugins/`.
 3. Doctrine: OpenCode reads AGENTS.md natively — `statutor init` already covers
    the constitution. Optionally inject the condensed doctrine from
    `skills/statutor/SKILL.md` via the `experimental.chat.system.transform` hook.

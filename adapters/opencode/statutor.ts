@@ -1,5 +1,7 @@
-// statutor adapter for OpenCode — copy into .opencode/plugins/ (or your plugin dir).
-// Requires the statutor CLI on PATH (pipx install statutor, or pip install -e .).
+// statutor adapter for OpenCode — install via opencode.json:
+//   "plugin": ["statutor"]
+// (or copy this file into .opencode/plugins/). Requires the statutor CLI
+// on PATH (pipx install statutor, or pip install -e .).
 // tool.execute.before ~ Claude Code's PreToolUse: throwing blocks the call.
 // Subagent tool calls DO fire plugin hooks (verified opencode v1.18.21,
 // 2026-08-21; sst/opencode#5894 was a misdiagnosis, stale-closed 2026-04-15).

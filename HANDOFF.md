@@ -1,34 +1,33 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-24 by `pytest -q → 238 passed/8 skipped; statutor staged clean; TASKS queue empty except human registry trio`
+last_verified: 2026-08-24 by `pytest -q → 238 passed/8 skipped; opencode scratch E2E: bash-guard denial reached model as tool result`
 
 ## Goal
-Ship statutor v0.3: registry placeholders claimed, repo public, tagged and
-published via trusted publishing — four enforced surfaces (D-0012).
+Ship statutor v0.3: real registry artifacts (D-0014), repo public, tagged
+and published — four enforced surfaces.
 
 ## Last verified state
-Agent queue EMPTY 2026-08-24. Everything agent-side is done and pushed:
-apply_patch parsed by the kernel (D-0011), pre-commit fails closed, doctor
-filenames policy-derived, stop-hook sentinel follows renames, Hermes
-dropped (D-0012), T-0006 closed wontfix (D-0013 — no periodic checkpoint
-mechanism; staleness is the doctor's job). v0.3 prep landed (metadata,
-LICENSE, publish.yml). T-0007 closed incl. human plugin swap.
+Phase 1 (T-0019) DONE: npm package `statutor` 0.1.0 packaged in
+adapters/opencode/ (tarball audited) and E2E-proven in a scratch project —
+opencode.json `"plugin": ["./node_modules/statutor/statutor.ts"]` loads,
+hook fires, `statutor check` exit 2 surfaces as the model's tool result.
+Publish itself is T-0022 (human tokens). Phase 2 next: T-0020 kernel
+color fix + Rust floor, T-0021 conformance harness + CI leg.
 
 ## Next action
-Human only: T-0016 npm + T-0017 crates placeholders and T-0018 repo
-public per plans/registry-claims.md; then archive that plan, bump
-pyproject to 0.3.0, commit, tag v0.3.0, push — publish.yml verifies
-tag≡version and publishes OIDC-tokenless. Human AGENTS.md/ROADMAP.md
-edits were still uncommitted at this writing — commit or discard them.
+Phase 2 on human go-ahead. Human tails whenever ready: from
+adapters/opencode/ run `npm login && npm publish --access public`
+(T-0022); registry trio T-0016..T-0018 per plans/registry-claims.md.
+Then archive that plan, bump 0.3.0, tag, push (publish.yml publishes).
 
 ## Gotchas
-One doctor WARN stands until plans/registry-claims.md archives (its own
-done-condition names all four registry tasks). No global CLI install
-locally (PEP 668); local floor is the in-repo shim. Tests via
-/opt/homebrew/bin/pytest; two doctor tests skip without PyYAML locally.
-DECISIONS.md keeps its writ header marker. ROADMAP promotion intents
-(npm plugin, Rust floor) need D-records before any code exists.
+Testing a child opencode from inside an opencode session: unset
+OPENCODE/OPENCODE_PID or plugins misbehave; give the child an explicit
+cwd and its own PATH shim for the statutor CLI (no global install here,
+PEP 668). One doctor WARN stands until plans/registry-claims.md archives.
+Tests via /opt/homebrew/bin/pytest; two doctor tests skip sans PyYAML.
+DECISIONS.md keeps its writ header marker.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of

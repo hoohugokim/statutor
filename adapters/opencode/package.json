@@ -1,0 +1,27 @@
+{
+  "name": "statutor",
+  "version": "0.1.0",
+  "description": "OpenCode enforcement adapter for statutor, the typed project-ledger framework for agentic repos. In-loop mutation-policy checks via the Python kernel CLI (pip install statutor).",
+  "license": "MIT",
+  "type": "module",
+  "main": "statutor.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hoohugokim/statutor.git",
+    "directory": "adapters/opencode"
+  },
+  "bugs": "https://github.com/hoohugokim/statutor/issues",
+  "keywords": [
+    "opencode",
+    "statutor",
+    "ledger",
+    "governance",
+    "agents",
+    "hooks",
+    "pre-commit"
+  ],
+  "files": [
+    "statutor.ts",
+    "README.md"
+  ]
+}

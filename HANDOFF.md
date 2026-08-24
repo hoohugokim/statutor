@@ -1,35 +1,36 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-24 by `pytest -q → 245 passed/6 skipped; statutor staged clean; v0.2.0 tag on origin`
+last_verified: 2026-08-24 by `pytest -q → 238 passed/8 skipped; statutor staged clean; v0.2.0 live on PyPI; plugin re-installed from this tree`
 
 ## Goal
-Ship statutor v0.3: CI-verified, published, plugin-installable on all five adapters.
+Ship statutor v0.3: published, registry placeholders in place, repo public —
+enforced ledgers on Claude Code, OpenCode, Codex, and the git floor (D-0012).
 
 ## Last verified state
-Open agent queue drained 2026-08-24: T-0011 kernel parses apply_patch
-envelopes (D-0011; opencode allowlist + codex matcher widened), T-0012
-pre-commit hook fails closed without the CLI, T-0013 doctor filenames are
-policy-derived, T-0010 Hermes gets full in-loop enforcement via the new
-plugin adapter (pre_tool_call block directive, verified from hermes-agent
-source). T-0007 half-done: v0.2.0 tagged at the published tree + pushed;
-interactive /plugin swap remains. Suite 245 passed/6 skipped; floor clean.
+Agent queue fully drained + scope cut executed 2026-08-24: apply_patch is
+kernel-parsed (D-0011), pre-commit hook fails closed without the CLI,
+doctor filenames policy-derived, stop-hook sentinel follows renames.
+Hermes adapter DROPPED (D-0012) — four supported surfaces remain.
+T-0007 closed: v0.2.0 tagged/pushed AND plugin flow verified by human.
+v0.3 prep landed: pyproject metadata (PEP 639 MIT), LICENSE, publish.yml
+(OIDC trusted publishing, tag/version guard). Suite green; floor clean.
 
 ## Next action
-Human: (1) re-scope or drop T-0006 — the "Clawd 5-hour checkpoint hook"
-referenced there does not exist on disk; (2) finish T-0007 in Claude Code:
-/plugin marketplace remove the old writ path, add ~/workbench/statutor,
-install statutor@hoo-plugins; (3) T-0016/T-0017/T-0018 registry steps per
-plans/registry-claims.md. Then archive that plan and cut v0.3 (metadata
-polish + trusted-publisher workflow; 0.2.0 is burned).
+Human-only tail, per plans/registry-claims.md: T-0016 npm placeholder,
+T-0017 crates placeholder, T-0018 flip repo public (+optional org/domains).
+One-time PyPI UI step already done? If not: register pending trusted
+publisher (hoohugokim/statutor, workflow publish.yml). Then archive that
+plan and cut v0.3: bump version → tag v0.3.0 → push (publish.yml does the
+rest; 0.2.0 is burned).
 
 ## Gotchas
-Two doctor WARNs are expected until the plans above archive (each names its
-own completion condition). AGENTS.md pitfall about apply_patch/MCP allowlist
-misses is now stale — writer=human, needs a human edit line. The local git
-floor is an in-repo shim (.git/hooks/pre-commit); no global CLI install
-(PEP 668 blocks brew pip). python3 is 3.9.6 — run tests via
-/opt/homebrew/bin/pytest. DECISIONS.md keeps its writ header marker.
+One doctor WARN expected until plans/registry-claims.md archives (its own
+done-condition names all four registry tasks). ROADMAP/AGENTS.md edits are
+the human's in-flight changes — never stage them blindly. No global CLI
+install locally (PEP 668); local floor is the in-repo shim. Tests via
+/opt/homebrew/bin/pytest; two doctor tests skip without PyYAML locally.
+DECISIONS.md keeps its writ header marker.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of

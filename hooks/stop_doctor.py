@@ -17,6 +17,11 @@ Fails open on anything unexpected (bad stdin, missing doctor script,
 doctor crash/timeout): a broken linter must never trap the user in the
 session. Never re-fires once this turn has already been continued once
 (stop_hook_active), bounding us to at most one continuation per turn.
+
+The overwrite_bounded filename is derived from the repo's policy (same
+basename-only rule the doctor applies), so a ledger that renamed its
+state file gets the same scaffold-sentinel courtesy; anything that can't
+be resolved falls back to the conventional HANDOFF.md.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import subprocess
 import sys
 
 DOCTOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "statutor_doctor.py")
+CORE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core")
 
 # The scaffolded HANDOFF.md template ships an unfilled `last_verified:
 # 1970-01-01` sentinel (core/statutor_core.py TEMPLATES, not editable here).
@@ -34,8 +40,26 @@ DOCTOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", 
 # otherwise trip this hook on the very first Stop after scaffolding. A
 # single WARN naming exactly that sentinel date is treated as init-state
 # noise, not drift, and suppressed.
-_SENTINEL_STALE_WARN_PREFIX = "WARN  HANDOFF.md last verified"
 _SENTINEL_DATE = "1970-01-01"
+
+
+def _state_filename(project_dir: str) -> str:
+    """Policy-derived name of the overwrite_bounded file (basename-only
+    patterns, matching statutor_doctor's `_rule_filename`); conventional
+    fallback on any resolution failure (fail-open)."""
+    try:
+        if CORE_DIR not in sys.path:
+            sys.path.insert(0, CORE_DIR)
+        import statutor_core
+
+        for rule in statutor_core.load_policy(project_dir).get("governed", []):
+            pattern = rule.get("pattern", "")
+            if (rule.get("policy") == "overwrite_bounded" and pattern
+                    and "*" not in pattern and "/" not in pattern):
+                return pattern
+    except Exception:
+        pass
+    return "HANDOFF.md"
 
 
 def _looks_like_ledger(project_dir: str) -> bool:
@@ -72,11 +96,13 @@ def main() -> int:
         if line.startswith("WARN") or line.startswith("ERROR")
     ]
 
-    handoff_stamp_present = os.path.isfile(os.path.join(project_dir, "HANDOFF.md"))
+    state_filename = _state_filename(project_dir)
+    sentinel_prefix = f"WARN  {state_filename} last verified"
+    handoff_stamp_present = os.path.isfile(os.path.join(project_dir, state_filename))
     if (handoff_stamp_present and len(findings) == 1
-            and findings[0].startswith(_SENTINEL_STALE_WARN_PREFIX)):
+            and findings[0].startswith(sentinel_prefix)):
         try:
-            handoff_text = open(os.path.join(project_dir, "HANDOFF.md"), encoding="utf-8").read()
+            handoff_text = open(os.path.join(project_dir, state_filename), encoding="utf-8").read()
         except Exception:
             handoff_text = ""
         if f"last_verified: {_SENTINEL_DATE}" in handoff_text:

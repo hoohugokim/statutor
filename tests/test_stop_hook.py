@@ -8,10 +8,13 @@ pipes a JSON event on stdin), not by importing it as a module.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
@@ -114,6 +117,69 @@ def test_non_sentinel_stale_handoff_surfaces(tmp_path):
     data = json.loads(result.stdout)
     ctx = data["hookSpecificOutput"]["additionalContext"]
     assert "HANDOFF.md last verified" in ctx
+
+
+# --------------------------------------------------------------------------
+# policy-derived state filename (sentinel suppression follows renames)
+# --------------------------------------------------------------------------
+
+_CUSTOM_STATE_YAML = """\
+bash_guard: true
+governed:
+  - pattern: AGENTS.md
+    policy: constitution
+    hard_max_lines: 200
+  - pattern: STATUS.md
+    policy: overwrite_bounded
+    max_lines: 40
+    required_sections:
+      - "## Goal"
+      - "## Last verified state"
+      - "## Next action"
+      - "## Gotchas"
+      - "## Do not touch"
+  - pattern: DECISIONS.md
+    policy: append_only
+  - pattern: TASKS.md
+    policy: state
+  - pattern: plans/archive/*
+    policy: frozen
+"""
+
+
+def _custom_ledger(tmp_path: Path, stamp: str) -> None:
+    statutor_core.run_init(str(tmp_path))
+    status = (tmp_path / "HANDOFF.md").read_text(encoding="utf-8")
+    (tmp_path / "HANDOFF.md").unlink()
+    (tmp_path / "STATUS.md").write_text(status.replace("1970-01-01", stamp), encoding="utf-8")
+    (tmp_path / ".statutor.yaml").write_text(_CUSTOM_STATE_YAML, encoding="utf-8")
+
+
+@pytest.mark.skipif(importlib.util.find_spec("yaml") is None,
+                    reason="custom-policy subprocess needs real PyYAML")
+def test_sentinel_suppression_follows_policy_renamed_state_file(tmp_path):
+    """A ledger whose overwrite_bounded file is named STATUS.md by policy
+    gets the same fresh-scaffold courtesy as HANDOFF.md: one lone sentinel
+    WARN must be suppressed, not continued into a spurious stop."""
+    _custom_ledger(tmp_path, "1970-01-01")
+    event = {"cwd": str(tmp_path), "stop_hook_active": False}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+@pytest.mark.skipif(importlib.util.find_spec("yaml") is None,
+                    reason="custom-policy subprocess needs real PyYAML")
+def test_real_drift_surfaces_on_policy_renamed_state_file(tmp_path):
+    """Suppression must not go over-broad: a renamed state file with a real
+    (non-sentinel) stale stamp is still reported, under its actual name."""
+    _custom_ledger(tmp_path, "2000-01-01")
+    event = {"cwd": str(tmp_path), "stop_hook_active": False}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    ctx = data["hookSpecificOutput"]["additionalContext"]
+    assert "STATUS.md last verified" in ctx
 
 
 # --------------------------------------------------------------------------

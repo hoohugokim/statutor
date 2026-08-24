@@ -7,6 +7,10 @@ lines in DECISIONS.md's staged diff; frozen = no modification/deletion under
 plans/archive/ (moving a plan INTO the archive is allowed); HANDOFF/AGENTS
 staged blobs against caps and required sections.
 
+For servers without a Python runtime, `crates/statutor/` builds a static,
+conformance-gated twin binary (`statutor-staged`) with byte-identical
+verdicts — see its README and DECISIONS.md D-0014.
+
 Preferred install via the pre-commit framework (uses .pre-commit-hooks.yaml
 at the statutor repo root):
 

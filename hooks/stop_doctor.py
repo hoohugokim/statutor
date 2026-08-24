@@ -61,7 +61,7 @@ def main() -> int:
 
     try:
         result = subprocess.run(
-            ["python3", DOCTOR, project_dir],
+            [sys.executable, DOCTOR, project_dir],
             capture_output=True, text=True, timeout=20,
         )
     except Exception:

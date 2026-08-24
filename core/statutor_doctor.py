@@ -74,10 +74,19 @@ def check(root: str) -> None:
     governed = policy.get("governed", [])
 
     if os.path.isfile(p(".statutor.yaml")) and policy is statutor_core.DEFAULT_POLICY:
-        warnings.append(
-            ".statutor.yaml present but not applied (PyYAML missing or file "
-            "invalid) — embedded defaults in effect."
-        )
+        # A file byte-identical to the scaffold template IS the embedded
+        # defaults — falling back loses nothing, so a fresh `statutor init`
+        # ledger on a PyYAML-less interpreter must not warn on every run.
+        try:
+            pristine = open(p(".statutor.yaml"), encoding="utf-8").read() \
+                == statutor_core.TEMPLATES[".statutor.yaml"]
+        except Exception:
+            pristine = False
+        if not pristine:
+            warnings.append(
+                ".statutor.yaml present but not applied (PyYAML missing or file "
+                "invalid) — embedded defaults in effect."
+            )
 
     check_names = [
         rule["pattern"] for rule in governed

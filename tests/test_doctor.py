@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
 
 import pytest
 
+import statutor_core
 import statutor_doctor
 
 # --------------------------------------------------------------------------
@@ -360,6 +361,20 @@ def test_statutor_yaml_present_but_unapplied_warns_when_pyyaml_absent(tmp_path, 
         "WARN  .statutor.yaml present but not applied (PyYAML missing or file "
         "invalid) — embedded defaults in effect."
     ) in out
+
+
+def test_pristine_scaffold_statutor_yaml_never_warns_without_pyyaml(tmp_path, monkeypatch, capsys):
+    """A .statutor.yaml byte-identical to the scaffold template IS the
+    embedded defaults, so the PyYAML-less fallback loses nothing — a fresh
+    `statutor init` ledger must stay warning-free on every interpreter
+    (regression: first CI run, pyyaml=false legs, 2026-08-24)."""
+    _write_ledger(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text(
+        statutor_core.TEMPLATES[".statutor.yaml"], encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 0
+    assert "present but not applied" not in out
 
 
 def test_statutor_yaml_present_but_unapplied_warns_when_governed_key_missing(tmp_path, monkeypatch, capsys):

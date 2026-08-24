@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "statutor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Typed project-ledger framework for agentic repos: four planes, single-writer files, enforced mutation policies."
 readme = "README.md"
 license = "MIT"

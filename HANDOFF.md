@@ -1,35 +1,34 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-23 by `CI green all 4 legs + PR #1 self-dogfood proven; local 204p/6s, 210p/0s w/ PyYAML`
+last_verified: 2026-08-24 by `pypi.org/pypi/statutor/json → 0.2.0 live (whl + sdist); CI green all four legs`
 
 ## Goal
 Ship statutor v0.3: CI-verified, published, plugin-installable on all five adapters.
 
 ## Last verified state
-Rename writ→statutor complete (D-0009/D-0010); repo ~/workbench/statutor,
-remote github.com/hoohugokim/statutor (PRIVATE), main @ 6e192d7 (PR #1 merged).
-CI proven: first run caught the pristine-scaffold WARN bug (fixed, 3f491db);
-all four matrix legs green; PR self-dogfood (`statutor staged` over PR delta)
-executed and passed on every leg. Git floor live locally (.git/hooks shim) —
-rejected a staged DECISIONS.md deletion in anger. Old writ tree retired
-UNMODIFIED at ~/workbench/Writ/writ.
+PyPI `statutor` 0.2.0 is LIVE (T-0015 done). Repo github.com/hoohugokim/statutor,
+main pushed, CI green on all four legs incl. the PR self-dogfood (T-0008).
+Rename complete (D-0009/D-0010); git floor live locally (.git/hooks shim).
+Old writ tree at ~/workbench/Writ is approved for deletion by the human —
+nothing in this repo references it; only the stale plugin install points there.
 
 ## Next action
-Human executes plans/registry-claims.md: T-0015 claim PyPI `statutor` (build +
-twine upload), T-0016 npm placeholder, T-0017 crates placeholder, T-0018 flip
-repo public — SAME DAY, before announcing the name anywhere. In parallel or
-after: reinstall the Claude plugin from ~/workbench/statutor (part of T-0007
-rehearsal: /plugin marketplace add ~/workbench/statutor, install
-statutor@hoo-plugins). New agent sessions start cold from this file + AGENTS.md.
+Human: T-0016 npm placeholder + T-0017 crates placeholder (runbook
+plans/registry-claims.md), T-0018 flip repo public. Then the plugin swap:
+/plugin marketplace remove the old writ path, /plugin marketplace add
+~/workbench/statutor, install statutor@hoo-plugins (first half of T-0007).
+New agent sessions start cold from this file + AGENTS.md and work the open
+TASKS.md queue (T-0006, T-0007, T-0010..T-0013, T-0016..T-0018).
 
 ## Gotchas
-PyPI versions are immutable — 0.2.0 is burned once uploaded; polish metadata at
-v0.3, not by re-upload. Session hooks may still point at the OLD Writ plugin
-until reinstall. DECISIONS.md keeps its `<!-- writ: -->` header marker
-(append-only; by design). python3 here is 3.9.6 — test via /opt/homebrew/bin/pytest.
+PyPI versions are immutable — 0.2.0 is burned; metadata polish lands as v0.3,
+not a re-upload. npm/crates stay HONEST placeholders for now; the promotion
+intents live in ROADMAP "Later" (npm → real OpenCode plugin after T-0011;
+crates → needs a D-record against D-0003's single-kernel rule). DECISIONS.md
+keeps its `<!-- writ: -->` marker (append-only). python3 is 3.9.6 — run tests
+via /opt/homebrew/bin/pytest.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of
-`.pre-commit-hooks.yaml`; top-level plugin layout (hooks/, commands/, skills/);
-~/workbench/Writ/writ (frozen pre-rename snapshot until the human deletes it).
+`.pre-commit-hooks.yaml`; top-level plugin layout (hooks/, commands/, skills/).

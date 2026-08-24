@@ -521,3 +521,63 @@ def test_all_required_sections_present_no_error(tmp_path, monkeypatch, capsys):
     out, code = run_doctor(monkeypatch, capsys, tmp_path)
     assert code == 0
     assert "missing required sections" not in out
+
+
+# --------------------------------------------------------------------------
+# T-0013: remaining hardcoded names derived from policy
+# --------------------------------------------------------------------------
+
+def test_custom_state_filename_drives_done_ids_and_plan_heuristic_stub_yaml(tmp_path, monkeypatch, capsys):
+    """The consumed-plan heuristic must read done ids from whichever file the
+    state rule governs (here BACKLOG.md), not the literal TASKS.md: with
+    BACKLOG.md marking T-0001 done and TASKS.md leaving it open, the plan
+    referencing T-0001 must still be flagged."""
+    policy = {
+        "bash_guard": True,
+        "governed": [
+            {"pattern": "AGENTS.md", "policy": "constitution", "hard_max_lines": 200},
+            {"pattern": "HANDOFF.md", "policy": "overwrite_bounded", "max_lines": 40,
+             "required_sections": ["## Goal", "## Last verified state", "## Next action",
+                                    "## Gotchas", "## Do not touch"]},
+            {"pattern": "DECISIONS.md", "policy": "append_only"},
+            {"pattern": "BACKLOG.md", "policy": "state"},
+        ],
+    }
+    _write_ledger(tmp_path, overrides={"TASKS.md": "- [ ] T-0001 open here\n"})
+    (tmp_path / "BACKLOG.md").write_text("- [x] T-0001 done there\n", encoding="utf-8")
+    plans_dir = tmp_path / "plans"
+    plans_dir.mkdir(exist_ok=True)
+    (plans_dir / "old-plan.md").write_text("Implements T-0001.\n", encoding="utf-8")
+    (tmp_path / ".statutor.yaml").write_text("placeholder: true\n", encoding="utf-8")
+    _stub_yaml(monkeypatch, policy)
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 0
+    assert "plans/old-plan.md references completed task(s) ['T-0001']" in out
+
+
+def test_custom_append_only_filename_status_check_stub_yaml(tmp_path, monkeypatch, capsys):
+    """The D-record Status check must apply to whichever file the append_only
+    rule governs (here CHOICES.md): a statusless CHOICES record warns by
+    name, while a statusless DECISIONS.md record goes unflagged because no
+    rule points at that filename anymore."""
+    policy = {
+        "bash_guard": True,
+        "governed": [
+            {"pattern": "AGENTS.md", "policy": "constitution", "hard_max_lines": 200},
+            {"pattern": "HANDOFF.md", "policy": "overwrite_bounded", "max_lines": 40,
+             "required_sections": ["## Goal", "## Last verified state", "## Next action",
+                                    "## Gotchas", "## Do not touch"]},
+            {"pattern": "CHOICES.md", "policy": "append_only"},
+            {"pattern": "TASKS.md", "policy": "state"},
+        ],
+    }
+    _write_ledger(tmp_path, overrides={
+        "DECISIONS.md": "# DECISIONS\n\n## D-0001\nno status field\n"})
+    (tmp_path / "CHOICES.md").write_text(
+        "# CHOICES\n\n## D-0001 — Example\n**Context:** x\n**Decision:** y\n", encoding="utf-8")
+    (tmp_path / ".statutor.yaml").write_text("placeholder: true\n", encoding="utf-8")
+    _stub_yaml(monkeypatch, policy)
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 0
+    assert "CHOICES.md: 1 records but only 0 Status fields" in out
+    assert "DECISIONS.md" not in out

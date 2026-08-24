@@ -28,6 +28,10 @@ key (or the whole rule) is absent:
   * the overwrite_bounded filename comes from that rule's pattern (same
     restriction); staleness threshold: optional `stale_after_days`;
     required sections: optional `required_sections`
+  * the state-plane (TASKS) filename and the append-only (DECISIONS)
+    filename come from their rules' patterns (same restriction); the plans/
+    directory itself stays conventional — `statutor init` scaffolds it and
+    no governed basename can express a directory
 
 Exit code 1 on errors, 0 on clean/warnings-only.
 """
@@ -103,6 +107,12 @@ def check(root: str) -> None:
     handoff_stale_days = int(overwrite_rule.get("stale_after_days", HANDOFF_STALE_DAYS)) \
         if overwrite_rule else HANDOFF_STALE_DAYS
 
+    state_rule = next((r for r in governed if r.get("policy") == "state"), None)
+    tasks_filename = _rule_filename(state_rule, "TASKS.md")
+
+    append_only_rule = next((r for r in governed if r.get("policy") == "append_only"), None)
+    decisions_filename = _rule_filename(append_only_rule, "DECISIONS.md")
+
     for name in check_names:
         if not os.path.isfile(p(name)):
             errors.append(f"missing governed file: {name} (run /ledger-init)")
@@ -137,8 +147,8 @@ def check(root: str) -> None:
             )
 
     done_ids: set[str] = set()
-    if os.path.isfile(p("TASKS.md")):
-        for line in open(p("TASKS.md"), encoding="utf-8"):
+    if os.path.isfile(p(tasks_filename)):
+        for line in open(p(tasks_filename), encoding="utf-8"):
             m = re.match(r"- \[x\]\s+(\S+)", line, re.IGNORECASE)
             if m:
                 done_ids.add(m.group(1))
@@ -157,13 +167,13 @@ def check(root: str) -> None:
                     "move to plans/archive/ (consumed plans are stale intent)."
                 )
 
-    if os.path.isfile(p("DECISIONS.md")):
-        body = open(p("DECISIONS.md"), encoding="utf-8").read()
+    if os.path.isfile(p(decisions_filename)):
+        body = open(p(decisions_filename), encoding="utf-8").read()
         records = re.findall(r"^## D-\d+", body, re.MULTILINE)
         statuses = re.findall(r"^\*\*Status:\*\*", body, re.MULTILINE)
         if len(statuses) < len(records):
             warnings.append(
-                f"DECISIONS.md: {len(records)} records but only {len(statuses)} "
+                f"{decisions_filename}: {len(records)} records but only {len(statuses)} "
                 "Status fields — every record needs one."
             )
 

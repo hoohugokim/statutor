@@ -1,8 +1,8 @@
 # statutor × OpenCode
 
-1. `pipx install statutor` (or `pip install -e <statutor checkout>`) — the
-   adapter shells out to the Python kernel CLI; without it the plugin is
-   a no-op.
+1. `pipx install statutor` — the adapter shells out to the Python kernel CLI;
+   without it the plugin is a no-op. From a source checkout, the developer
+   equivalent is `python -m pip install -e .` at the repository root.
 2. Install the adapter itself:
 
    ```jsonc

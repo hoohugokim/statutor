@@ -101,3 +101,9 @@
 **Decision:** Every checkbox entry in a `state` file is one line shaped `- [ ] T-NNNN detail` or `- [x] T-NNNN detail`, with a unique four-or-more-digit ID. Existing IDs survive every candidate; checkbox, detail, and order may change. New IDs must be numerically greater than the committed maximum. Bash writes and record deletion/rename-out are denied; editor/apply_patch paths enforce what they can in-loop, and the HEAD/index floor judges the complete blob.
 **Decision:** v0.3.1 has no pruning operation. Completed tasks remain as identity history. Any future compaction must first define an append-only or frozen archive that preserves the complete ID mapping and must supersede this decision.
 **Consequences:** Doctor reports malformed/duplicate state entries; Python/Rust conformance carries allowed and denied transitions. This does not make task prose immutable or impose task ordering, dependency, assignment, or workflow semantics.
+
+## D-0017 — Native staged twin is local-only, not a static server floor
+**Status:** accepted; supersedes D-0014's static/pre-receive rationale only
+**Context:** The published Rust binary reads a worktree index through `git diff --cached`. A bare pre-receive hook has neither that index nor the pushed old/new ref transaction, and ordinary Cargo builds do not guarantee static linkage.
+**Decision:** `statutor-staged` remains the conformance-gated native implementation of local `staged` mode for pre-commit and CI. Public material must say native/no-Python, never static, and must not prescribe it for pre-receive. A server validator requires a new ref-range contract, decision, CLI mode, and conformance matrix.
+**Consequences:** D-0014 still licenses the narrow Rust duplicate and its registry artifact. v0.3.1 retracts the false deployment claims rather than pretending staged-index semantics are portable to a server transaction.

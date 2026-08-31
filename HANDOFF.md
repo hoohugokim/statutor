@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `full pytest 353/5; doctor suite 47; prior fresh cargo 7/conformance 61/package 3; diff clean`
+last_verified: 2026-08-31 by `full pytest 357/5; package audit 3; doctor clean; JSON/diff clean`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -15,13 +15,14 @@ detail, and order may change; new IDs advance beyond the committed maximum.
 T-0028 makes doctor/Stop aggregate invalid dates, resolve nested marked roots,
 and ignore generic AGENTS-only repos. Shell/editor/apply_patch, doctor, and both
 floors enforce the state contract. The floor carries 59 semantic scenarios;
-malformed policy/Git failures deny. Exact 0.1.1 audits remain green.
+malformed policy/Git failures deny. D-0017 and public-claim tests now confine
+the native twin to local staged-index use and keep install examples exact.
 
 ## Next action
-Execute T-0029's public truth sweep: retract staged-as-pre-receive and static
-binary claims, correct matcher/pin/placeholders, and distinguish distribution
-channels from enforcement coverage. Then build T-0030's release gate. Real-home
-dogfood remains separately gated.
+Build T-0030's release gate: test built wheel/sdist/npm/crate artifacts, enforce
+metadata/tag parity, bump the Python/plugin patch version, and leave immutable
+publication for explicit human action. Real-home dogfood remains separately
+gated.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

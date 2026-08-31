@@ -37,11 +37,11 @@ archive exists (D-0016).
 
 | Adapter | Mechanism | Coverage |
 |---|---|---|
-| Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
+| Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash\|apply_patch` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
 | OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check` | in-loop (write/edit/bash)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
-| git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` on pre-commit / pre-receive | universal floor |
-| git servers (`crates/statutor/`) | static `statutor-staged` binary for pre-receive, conformance-gated ≡ Python (D-0014) | universal floor, no runtime |
+| git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |
+| native (`crates/statutor/`) | `statutor-staged`, conformance-gated ≡ Python | local staged floor without Python |
 | Custom harnesses (`statutor check`, or import `validate`) | embed in your own tool dispatch | full in-loop |
 
 ¹ in-loop for write/edit/bash/apply_patch; the kernel parses apply_patch
@@ -66,12 +66,15 @@ mandatory there.
     statutor init .                      # scaffold any repo, any harness
 
     # Claude Code (this repo doubles as the plugin):
-    /plugin marketplace add <path-or-url>
+    /plugin marketplace add https://github.com/hoohugokim/statutor
     /plugin install statutor@hoo-plugins --scope project
     # then: /statutor-init  /handoff  /decide  /statutor-doctor
 
-    # git floor for every repo:
-    #   .pre-commit-config.yaml → repo: <this repo>, hooks: [{id: statutor}]
+    # .pre-commit-config.yaml
+    repos:
+      - repo: https://github.com/hoohugokim/statutor
+        rev: v0.3.0
+        hooks: [{id: statutor}]
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
 HEAD snapshot; the git floor judges the transaction under both HEAD and the

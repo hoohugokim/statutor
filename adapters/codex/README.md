@@ -28,10 +28,9 @@ Three things to know:
    the payload seen by hook processes. Since T-0011, `validate()` in
    core/statutor_core.py parses that envelope (`guard_apply_patch`):
    frozen paths are untouchable (arrival INTO the archive still allowed),
-   Delete File on a governed constitution/overwrite_bounded/append_only
-   path is denied wholesale, Add File gets the full cap + required-sections
-   check, and Update File denies append-only deletions and estimates the
-   resulting line count. Residual blind spots — required sections on an
+   Delete File on any governed record path is denied wholesale, Add File gets
+   cap/section/state checks, and Update File denies append-only deletions,
+   preserves state IDs, and estimates sized-file growth. Residual blind spots — required sections on an
    Update File partial diff, and MCP tools — are covered by the GIT FLOOR
    (adapters/git/), which stays mandatory here.
 3. Registration: BOTH `hooks.json` and an inline `[hooks]` table in
@@ -41,7 +40,7 @@ Three things to know:
 
 `~/.codex/hooks.json` (or `<repo>/.codex/hooks.json`):
 
-    { "hooks": { "PreToolUse": [ { "matcher": "^Bash$",
+    { "hooks": { "PreToolUse": [ { "matcher": "^(Bash|apply_patch)$",
         "hooks": [ { "type": "command", "command": "statutor hook",
         "timeout": 30, "statusMessage": "statutor policy check" } ] } ] } }
 
@@ -49,7 +48,7 @@ Equivalent inline form in config.toml (use instead of, never alongside,
 hooks.json in the same layer):
 
     [[hooks.PreToolUse]]
-    matcher = "^Bash$"
+    matcher = "^(Bash|apply_patch)$"
     [[hooks.PreToolUse.hooks]]
     type = "command"
     command = "statutor hook"
@@ -57,8 +56,8 @@ hooks.json in the same layer):
     statusMessage = "statutor policy check"
 
 `matcher` is a regex over the tool name and its aliases. Since T-0011 the
-kernel parses apply_patch envelopes, so widening to `"^(Bash|apply_patch)$"`
-gives real in-loop file-mutation coverage; tools outside both patterns
+kernel parses apply_patch envelopes, so `"^(Bash|apply_patch)$"` gives real
+in-loop file-mutation coverage; tools outside both patterns
 (e.g. MCP ids) still never reach statutor — the git floor covers them.
 
 Doctrine ports for free: Codex reads AGENTS.md natively (32 KiB combined

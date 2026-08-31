@@ -6,6 +6,10 @@ with `python3 core/statutor_core.py staged <dir>` (same exit codes, same
 non-bare working tree for local pre-commit hooks and CI. It does not consume
 the ref-update stream required for a server-side pre-receive hook.
 
+“Native” means compiled for the selected Cargo target and runnable without
+Python. It does not promise fully static linkage; libc/system dependencies
+follow the chosen Rust target and toolchain.
+
 This is not a port of Statutor. The policy kernel stays canonical in
 Python (`core/statutor_core.py`); this crate is a narrow, deliberately
 dumb twin whose *existence license* is continuous behavioral equivalence:

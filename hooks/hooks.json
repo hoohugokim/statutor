@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash",
+        "matcher": "^(Write|Edit|Bash|apply_patch)$",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/statutor_core.py\" hook" }
         ]

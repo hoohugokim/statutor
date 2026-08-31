@@ -161,7 +161,7 @@ jobs:
 
       - name: Differential conformance — Python ≡ Rust on every scenario
         run: |
-          python -m pip install --upgrade pip pytest pyyaml
+          python -m pip install --upgrade pip pytest
           python -m pytest -q tests/test_conformance_rust.py
 
       - name: Audit Cargo and npm package payloads

@@ -123,6 +123,7 @@ def _audit_sdist(path: Path, version: str) -> None:
         "core/statutor_doctor.py",
         "core/statutor_global.py",
         "core/statutor_global_cli.py",
+        "core/statutor_global_status.py",
         "core/statutor_skills.py",
     }
     seen: set[str] = set()
@@ -158,6 +159,7 @@ def _audit_wheel(path: Path, version: str) -> None:
         "statutor_doctor.py",
         "statutor_global.py",
         "statutor_global_cli.py",
+        "statutor_global_status.py",
         "statutor_skills.py",
         f"{dist}/METADATA",
         f"{dist}/RECORD",
@@ -269,6 +271,12 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
     ], env=global_env)
     _run([
         str(statutor), "global", "skill", "status", *roots, "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "status", *roots, "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "doctor", *roots, "--json",
     ], env=global_env)
     portable = global_home / ".agents" / "skills" / "fixture-skill"
     claude = global_home / ".claude" / "skills" / "fixture-skill"

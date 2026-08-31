@@ -37,9 +37,13 @@ def _frontmatter_scalar(value: str) -> str:
     return value
 
 
-def skill_metadata(skill_root: Path) -> dict[str, str]:
+def skill_metadata(
+    skill_root: Path, *, validate_tree: bool = True,
+    allow_root_symlink: bool = False,
+    expected_name: str | None = None,
+) -> dict[str, str]:
     """Read required Agent Skills metadata without normalizing extensions."""
-    if skill_root.is_symlink() or not skill_root.is_dir():
+    if (skill_root.is_symlink() and not allow_root_symlink) or not skill_root.is_dir():
         raise substrate.UnsafeTree("skill root must be a real directory")
     entrypoint = skill_root / "SKILL.md"
     try:
@@ -83,11 +87,12 @@ def skill_metadata(skill_root: Path) -> dict[str, str]:
     description = metadata.get("description", "")
     if not SKILL_NAME_RE.fullmatch(name) or len(name) > 64:
         raise substrate.SchemaError("skill name violates the Agent Skills specification")
-    if name != skill_root.name:
+    if name != (expected_name or skill_root.name):
         raise substrate.SchemaError("skill name must match its parent directory")
     if not 1 <= len(description) <= 1024:
         raise substrate.SchemaError("skill description must contain 1-1024 characters")
-    substrate.tree_digest(skill_root)
+    if validate_tree:
+        substrate.tree_digest(skill_root)
     return {"name": name, "description": description}
 
 

@@ -117,6 +117,7 @@ regular file and imports its bytes verbatim into that host's canonical overlay.
     statutor global plan --json
     statutor global apply --host codex
     statutor global status --json
+    statutor global doctor --json
     statutor global adopt claude
     statutor global uninstall --host codex
 
@@ -143,6 +144,16 @@ and names in a foreign `.agents/.skill-lock.json` remain entirely foreign.
 OpenCode discovers the portable and Claude projections, so Statutor reports
 whether those duplicates are identical instead of creating a third native
 OpenCode copy.
+
+Unified `global status` is a fast, read-only inventory of effective instruction
+precedence, ownership, disabled/foreign skills, duplicate names, legacy/native/
+admin/plugin roots, and catalog size. `global doctor` performs the deeper full-
+tree audit: managed drift and receipt topology, generated headers, unsafe links,
+active divergent duplicates, Codex's configured instruction cap, and Statutor's
+32 KiB skill-description diagnostic budget (reported explicitly as a Statutor
+budget, not a host limit). Status exits zero when inventory completes; doctor
+exits one when the audit contains errors. Neither command invokes a host binary
+or performs a network request.
 
 ## Provenance
 

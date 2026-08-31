@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `release gate: pytest 416/3; Rust 7/0; wheel skill smoke; doctor/staged clean`
+last_verified: 2026-08-31 by `release gate: pytest 430/3; Rust 7/0; wheel status/doctor smoke; staged clean`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -19,10 +19,12 @@ state lock/journals, durable file/tree CAS, and exact backup/restore primitives.
 T-0033/34 expose reversible instruction and Agent Skill lifecycles: deterministic
 whole-file/tree projections, adoption, foreign-lock coexistence, duplicate
 classification, CAS refusal, receipts, journals, rollback, and packaged CLI.
+T-0035 adds fast stable status and deep doctor for precedence, drift, unsafe
+links, receipt topology, eight skill roots, duplicates, and explicit budgets.
 
 ## Next action
-Implement T-0035's unified stable status/doctor inventory: precedence,
-shadowing, drift, unsafe skills, catalog budget, and legacy/native roots.
+Execute T-0036's fake-profile/current-release E2E, update adapter docs and
+versions for v0.4, and prepare—not publish/tag/push—the release candidate.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

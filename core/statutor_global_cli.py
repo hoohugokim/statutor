@@ -633,7 +633,9 @@ def uninstall_plan(
     }
 
 
-def _print_result(data: object, json_output: bool, *, file=sys.stdout) -> None:
+def _print_result(data: object, json_output: bool, *, file=None) -> None:
+    if file is None:
+        file = sys.stdout
     if json_output:
         print(json.dumps(data, sort_keys=True, indent=2), file=file)
     elif isinstance(data, list):
@@ -664,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
         return statutor_skills.main(argv[1:])
     parser = argparse.ArgumentParser(prog="statutor global")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "plan", "apply", "status", "uninstall"):
+    for name in ("init", "plan", "apply", "status", "doctor", "uninstall"):
         child = subparsers.add_parser(name)
         _root_arguments(child)
         if name != "init":
@@ -676,6 +678,7 @@ def main(argv: list[str] | None = None) -> int:
     adopt.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     roots = _roots(args)
+    exit_code = 0
     try:
         if args.command == "init":
             _print_result(init_plan(roots), args.json, file=sys.stderr)
@@ -687,7 +690,14 @@ def main(argv: list[str] | None = None) -> int:
             _print_result(preview, args.json, file=sys.stderr)
             result = apply_instructions(roots, hosts=args.host)
         elif args.command == "status":
-            result = global_status(roots, hosts=args.host)
+            import statutor_global_status
+            result = statutor_global_status.global_inventory(
+                roots, hosts=args.host)
+        elif args.command == "doctor":
+            import statutor_global_status
+            result = statutor_global_status.global_doctor(
+                roots, hosts=args.host)
+            exit_code = 1 if result["summary"]["errors"] else 0
         elif args.command == "adopt":
             preview = adoption_plan(roots, args.host)
             _print_result(preview, args.json, file=sys.stderr)
@@ -699,8 +709,11 @@ def main(argv: list[str] | None = None) -> int:
     except substrate.GlobalError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    _print_result(result, args.json)
-    return 0
+    if args.command in {"status", "doctor"} and not args.json:
+        statutor_global_status.print_human(result)
+    else:
+        _print_result(result, args.json)
+    return exit_code
 
 
 if __name__ == "__main__":

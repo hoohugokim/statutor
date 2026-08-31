@@ -156,6 +156,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build the statutor-staged binary (locked)
@@ -168,3 +172,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest pyyaml
           python -m pytest -q tests/test_conformance_rust.py
+
+      - name: Audit Cargo and npm package payloads
+        env:
+          STATUTOR_PACKAGE_AUDIT: "1"
+        run: |
+          cargo --version
+          npm --version
+          tracked_target="$(git ls-files -- crates/statutor/target)"
+          if [ -n "$tracked_target" ]; then
+            echo "tracked Cargo target/ output:" >&2
+            printf '%s\n' "$tracked_target" >&2
+            exit 1
+          fi
+          python -m pytest -q tests/test_package_payloads.py

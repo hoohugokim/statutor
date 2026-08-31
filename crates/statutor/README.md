@@ -1,9 +1,10 @@
-# statutor-staged — the static git floor
+# statutor-staged — the native local git floor
 
-A single static binary implementing **`staged` mode only**: byte-compatible
+A native binary implementing **`staged` mode only**: byte-compatible
 with `python3 core/statutor_core.py staged <dir>` (same exit codes, same
-`STATUTOR  <violation>` lines), built for **server-side `pre-receive`
-hooks** where no Python runtime exists.
+`STATUTOR  <violation>` lines). It validates the current staged index in a
+non-bare working tree for local pre-commit hooks and CI. It does not consume
+the ref-update stream required for a server-side pre-receive hook.
 
 This is not a port of Statutor. The policy kernel stays canonical in
 Python (`core/statutor_core.py`); this crate is a narrow, deliberately
@@ -18,13 +19,17 @@ not exist here and must never: they belong to the harnesses that have them.
 
 Enforced on staged changes only:
 
-* `frozen` paths (`plans/archive/*`): tamper/deletion denied; renames INTO
-  the archive allowed, departures denied (both rename sides checked under `-M`)
-* `append_only` files: any deleting/modifying line in the `-U0` staged diff
-  denied
+* governed constitution/state/log records: deletion and rename outside their
+  matching policy rule denied
+* `frozen` paths (`plans/archive/*`): tamper, deletion, and direct addition
+  denied; renames INTO the archive allowed, departures denied
+* `append_only` files: every HEAD line must survive byte-for-byte and in order
+  in the index, independent of binary-diff and `.gitattributes` rendering
 * `overwrite_bounded` / `constitution` files: staged blob judged against
   `max_lines` / `hard_max_lines` (fallback chain ends at 200) and
   `required_sections`
+* any failed Git query or non-worktree invocation denies with an actionable
+  floor error; only interactive hook mode retains its fail-open boundary
 
 Policy: `<repo>/.statutor.yaml` parsed via yaml-rust2; absence, parse
 failure, or a missing `governed` key falls back to embedded defaults,
@@ -37,12 +42,14 @@ identically to the Python kernel.
 The binary is `statutor-staged`, deliberately NOT named `statutor` — the
 Python CLI owns that PATH name and they must coexist (D-0009's lesson).
 
-## Server wiring
+## Local hook wiring
 
-```git # pre-receive in the bare repo's hooks dir
+```sh
 #!/bin/sh
-exec /usr/local/bin/statutor-staged "$(git rev-parse --show-toplevel)"
+# .git/hooks/pre-commit
+repo_root="$(git rev-parse --show-toplevel)" || exit 1
+exec statutor-staged "$repo_root"
 ```
 
-Fail-open character matches the Python floor: an absent repo/empty diff
-exits 0.
+The binary intentionally has no ref-range mode. A bare-repository hook needs
+separate semantics that validate every pushed old/new object range.

@@ -120,7 +120,7 @@ def s09_archive_delete(root: Path) -> None:
     git(root, "rm", "-q", "plans/archive/a.md")
 
 
-def s10_archive_new_add_exempt(root: Path) -> None:
+def s10_archive_direct_add(root: Path) -> None:
     base_ledger(root)
     (root / "plans" / "archive" / "new.md").write_text("x\n", encoding="utf-8")
     git(root, "add", "plans/archive/new.md")
@@ -304,6 +304,73 @@ def s30_malformed_statutor_yaml_falls_back(root: Path) -> None:
     git(root, "add", ".statutor.yaml"); git(root, "commit", "-q", "-m", "cfg")
     drop_last_line(root / "DECISIONS.md")
     git(root, "add", "DECISIONS.md")
+
+
+def s31_delete_agents_record(root: Path) -> None:
+    base_ledger(root)
+    git(root, "rm", "-q", "AGENTS.md")
+
+
+def s32_rename_agents_out(root: Path) -> None:
+    base_ledger(root)
+    git(root, "mv", "AGENTS.md", "CONSTITUTION.md")
+
+
+def s33_delete_handoff_record(root: Path) -> None:
+    base_ledger(root)
+    git(root, "rm", "-q", "HANDOFF.md")
+
+
+def s34_rename_handoff_out(root: Path) -> None:
+    base_ledger(root)
+    git(root, "mv", "HANDOFF.md", "SHIFT.md")
+
+
+def s35_rename_decisions_out(root: Path) -> None:
+    base_ledger(root)
+    git(root, "mv", "DECISIONS.md", "HISTORY.md")
+
+
+def s36_delete_tasks_record(root: Path) -> None:
+    base_ledger(root)
+    git(root, "rm", "-q", "TASKS.md")
+
+
+def s37_append_only_binary_rewrite(root: Path) -> None:
+    base_ledger(root)
+    (root / "DECISIONS.md").write_bytes(b"rewritten\x00binary\n")
+    git(root, "add", "DECISIONS.md")
+
+
+def s38_append_only_unstaged_attributes(root: Path) -> None:
+    base_ledger(root)
+    (root / ".gitattributes").write_text("DECISIONS.md -diff\n", encoding="utf-8")
+    (root / "DECISIONS.md").write_text(
+        "# DECISIONS\n\nwholesale rewrite\n", encoding="utf-8")
+    git(root, "add", "DECISIONS.md")
+
+
+def s39_bare_repo_git_failure(root: Path) -> None:
+    git(root, "init", "--bare", "-q", ".")
+
+
+def s40_missing_index(root: Path) -> None:
+    base_ledger(root)
+    os.unlink(root / ".git" / "index")
+
+
+def s41_append_only_middle_insertion(root: Path) -> None:
+    base_ledger(root)
+    path = root / "DECISIONS.md"
+    path.write_text(path.read_text().replace(
+        "# DECISIONS\n\n", "# DECISIONS\ninserted context\n\n"), encoding="utf-8")
+    git(root, "add", "DECISIONS.md")
+
+
+def s42_rename_within_same_rule(root: Path) -> None:
+    base_ledger(root)
+    (root / "docs").mkdir()
+    git(root, "mv", "DECISIONS.md", "docs/DECISIONS.md")
 
 
 SCENARIOS = {

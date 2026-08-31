@@ -1,9 +1,10 @@
 //! Conformance-gated Rust twin of the statutor git floor.
 //!
-//! Implements ONLY `staged` mode (pre-commit / pre-receive), byte-compatible
+//! Implements ONLY `staged` mode (local pre-commit/CI), byte-compatible
 //! with `python3 core/statutor_core.py staged <dir>` — same exit codes, same
 //! `STATUTOR  <violation>` lines, same Python-list-repr section formatting —
-//! so a server can run a static binary where no Python runtime exists.
+//! as a native binary that does not require a Python runtime. It does not
+//! implement the ref-range semantics required by server-side pre-receive.
 //!
 //! Existence license (DECISIONS.md D-0014): this duplicate is allowed to
 //! exist only while `tests/test_conformance_rust.py` proves Python ≡ Rust
@@ -266,23 +267,123 @@ fn class_match(p: &[char], open: usize, c: char) -> ClassResult {
     }
 }
 
-/// Machine-readable git output — `-c color.ui=false` mirrors the fixed
-/// Python `_git()` so ANSI-colored user configs cannot defeat the scans.
-fn git(cwd: &Path, args: &[&str]) -> String {
-    Command::new("git")
+/// Exact Git stdout bytes or an actionable, parity-stable floor error.
+fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let display = format!("git {}", args.join(" "));
+    let output = Command::new("git")
         .arg("-c")
         .arg("color.ui=false")
         .args(args)
         .current_dir(cwd)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+        .map_err(|_| {
+            format!(
+                "{display} could not start; staged validation requires a non-bare \
+Git worktree with a readable index."
+            )
+        })?;
+    if !output.status.success() {
+        let code = output
+            .status
+            .code()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        return Err(format!(
+            "{display} failed (exit {code}); staged validation requires a non-bare \
+Git worktree with a readable index."
+        ));
+    }
+    Ok(output.stdout)
+}
+
+#[derive(Debug)]
+struct Change {
+    status: String,
+    old: Option<String>,
+    new: Option<String>,
+}
+
+fn staged_changes(cwd: &Path) -> Result<Vec<Change>, String> {
+    let worktree = git(cwd, &["rev-parse", "--is-inside-work-tree"])?;
+    if String::from_utf8_lossy(&worktree).trim() != "true" {
+        return Err(
+            "git rev-parse --is-inside-work-tree reported no worktree; staged \
+validation requires a non-bare Git worktree with a readable index."
+                .to_string(),
+        );
+    }
+
+    let args = ["diff", "--cached", "--name-status", "-z", "-M"];
+    let raw = git(cwd, &args)?;
+    let mut fields: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+    if fields.last().is_some_and(|field| field.is_empty()) {
+        fields.pop();
+    }
+    let mut changes = Vec::new();
+    let mut i = 0usize;
+    while i < fields.len() {
+        let status = String::from_utf8_lossy(fields[i]).into_owned();
+        i += 1;
+        let paths_needed = if status.starts_with('R') || status.starts_with('C') {
+            2
+        } else {
+            1
+        };
+        if status.is_empty() || i + paths_needed > fields.len() {
+            return Err(
+                "git diff --cached --name-status -z -M returned malformed output; \
+staged validation cannot safely identify changed paths."
+                    .to_string(),
+            );
+        }
+        let paths: Vec<String> = fields[i..i + paths_needed]
+            .iter()
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        i += paths_needed;
+        let code = status.as_bytes()[0] as char;
+        let (old, new) = match code {
+            'A' => (None, Some(paths[0].clone())),
+            'D' => (Some(paths[0].clone()), None),
+            'R' | 'C' => (Some(paths[0].clone()), Some(paths[1].clone())),
+            _ => (Some(paths[0].clone()), Some(paths[0].clone())),
+        };
+        changes.push(Change { status, old, new });
+    }
+    Ok(changes)
 }
 
 fn frozen_msg(path: &str) -> String {
     format!(
         "{path}: frozen — archived records are immutable \
 (moving a plan INTO the archive is allowed)."
+    )
+}
+
+fn direct_frozen_add_msg(path: &str) -> String {
+    format!(
+        "{path}: frozen — direct additions to the archive are denied \
+(move an existing plan INTO the archive instead)."
+    )
+}
+
+fn lifecycle_msg(path: &str, kind: &str, destination: Option<&str>) -> String {
+    match destination {
+        None => format!(
+            "{path}: governed ({kind}) record cannot be deleted; \
+supersede it without removing its governed path."
+        ),
+        Some(dest) => format!(
+            "{path}: governed ({kind}) record cannot move to ungoverned path \
+{dest}; keep it under the same policy rule."
+        ),
+    }
+}
+
+fn lifecycle_policy(kind: &str) -> bool {
+    matches!(
+        kind,
+        "constitution" | "overwrite_bounded" | "append_only" | "state"
     )
 }
 
@@ -301,68 +402,103 @@ fn line_count(blob: &str) -> i64 {
     blob.matches('\n').count() as i64 + 1
 }
 
-/// The floor itself: validate the staged changes in `cwd`. Returns
-/// (exit_code, stdout) byte-compatible with the Python kernel's staged mode.
-pub fn run_staged(cwd: &Path) -> (i32, String) {
-    let policy = load_policy(cwd);
-    let mut violations: Vec<String> = Vec::new();
+fn pure_line_insertion(before: &[u8], after: &[u8]) -> bool {
+    let original: Vec<&[u8]> = before.split_inclusive(|b| *b == b'\n').collect();
+    if original.is_empty() {
+        return true;
+    }
+    let mut matched = 0usize;
+    for candidate in after.split_inclusive(|b| *b == b'\n') {
+        if candidate == original[matched] {
+            matched += 1;
+            if matched == original.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
 
-    // Pass 1 — frozen departure/tamper, including both sides of renames
-    // (arrival INTO the archive stays allowed).
-    let name_status = git(
-        cwd,
-        &["diff", "--cached", "--name-status", "-M"],
-    );
-    for line in name_status.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 2 {
+fn staged_violations(cwd: &Path, policy: &Policy) -> Result<Vec<String>, String> {
+    let changes = staged_changes(cwd)?;
+    let mut violations = Vec::new();
+
+    // Pass 1 — governed-record lifecycle and frozen transitions.
+    for change in &changes {
+        let code = change.status.as_bytes()[0] as char;
+        let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
+        let new_rule = change.new.as_deref().and_then(|p| match_rule(p, policy));
+        let old_kind = old_rule.map(|r| r.policy.as_str()).unwrap_or("");
+        let new_kind = new_rule.map(|r| r.policy.as_str()).unwrap_or("");
+
+        if code == 'D' {
+            let old = change.old.as_deref().unwrap_or("");
+            if old_kind == "frozen" {
+                violations.push(frozen_msg(old));
+            } else if lifecycle_policy(old_kind) {
+                violations.push(lifecycle_msg(old, old_kind, None));
+            }
             continue;
         }
-        let status = parts[0];
-        let old = parts[1];
-        let new = parts[parts.len() - 1];
-        let pairs: Vec<(&str, bool)> = if status.starts_with('R') {
-            vec![(old, false), (new, true)]
-        } else {
-            vec![(new, status.starts_with('A'))]
-        };
-        for (p, arriving) in pairs {
-            if let Some(rule) = match_rule(p, &policy) {
-                if rule.policy == "frozen" && !arriving {
-                    violations.push(frozen_msg(p));
-                }
+
+        if code == 'R' {
+            let old = change.old.as_deref().unwrap_or("");
+            let new = change.new.as_deref().unwrap_or("");
+            if old_kind == "frozen" {
+                violations.push(frozen_msg(old));
+            } else if lifecycle_policy(old_kind)
+                && !matches!((old_rule, new_rule), (Some(a), Some(b)) if std::ptr::eq(a, b))
+            {
+                violations.push(lifecycle_msg(old, old_kind, Some(new)));
+            }
+            // A rename is the sole supported way to arrive in frozen.
+            continue;
+        }
+
+        if new_kind == "frozen" {
+            let new = change.new.as_deref().unwrap_or("");
+            if code == 'A' || code == 'C' {
+                violations.push(direct_frozen_add_msg(new));
+            } else {
+                violations.push(frozen_msg(new));
             }
         }
     }
 
-    // Pass 2 — content policies on staged blobs / append-only diffs.
-    let name_only = git(cwd, &["diff", "--cached", "--name-only"]);
-    for path in name_only.lines() {
-        let Some(rule) = match_rule(path, &policy) else {
+    // Pass 2 — candidate blob policies; deleted paths have no candidate.
+    for change in &changes {
+        let Some(path) = change.new.as_deref() else {
             continue;
         };
+        let Some(rule) = match_rule(path, policy) else {
+            continue;
+        };
+        let code = change.status.as_bytes()[0] as char;
         match rule.policy.as_str() {
             "append_only" => {
-                let diff = git(cwd, &["diff", "--cached", "-U0", "--", path]);
-                let dels = diff
-                    .lines()
-                    .filter(|l| l.starts_with('-') && !l.starts_with("---"))
-                    .count();
-                if dels > 0 {
+                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
+                let same_rule = matches!(old_rule, Some(old) if std::ptr::eq(old, rule));
+                let baseline = if matches!(code, 'M' | 'T') || (code == 'R' && same_rule) {
+                    let old = change.old.as_deref().unwrap_or("");
+                    git(cwd, &["show", &format!("HEAD:{old}")])?
+                } else {
+                    Vec::new()
+                };
+                let candidate = git(cwd, &["show", &format!(":{path}")])?;
+                if !pure_line_insertion(&baseline, &candidate) {
                     violations.push(format!(
-                        "{path}: append-only, but staged diff deletes/modifies \
-{dels} line(s). Append superseding records instead."
+                        "{path}: append-only, but staged content deletes, rewrites, \
+or reorders existing lines. Append superseding records instead."
                     ));
                 }
             }
             "overwrite_bounded" | "constitution" => {
-                let blob = git(cwd, &["show", &format!(":{path}")]);
+                let bytes = git(cwd, &["show", &format!(":{path}")])?;
+                let blob = String::from_utf8_lossy(&bytes);
                 let n = line_count(&blob);
                 let cap = rule.cap();
                 if n > cap {
-                    violations.push(format!(
-                        "{path}: staged version is {n} lines (cap {cap})."
-                    ));
+                    violations.push(format!("{path}: staged version is {n} lines (cap {cap})."));
                 }
                 let missing: Vec<String> = rule
                     .required_sections
@@ -371,13 +507,23 @@ pub fn run_staged(cwd: &Path) -> (i32, String) {
                     .cloned()
                     .collect();
                 if !missing.is_empty() {
-                    violations
-                        .push(format!("{path}: missing sections {}.", py_list(&missing)));
+                    violations.push(format!("{path}: missing sections {}.", py_list(&missing)));
                 }
             }
             _ => {}
         }
     }
+    Ok(violations)
+}
+
+/// The floor itself: validate the staged changes in `cwd`. Returns
+/// (exit_code, stdout) byte-compatible with the Python kernel's staged mode.
+pub fn run_staged(cwd: &Path) -> (i32, String) {
+    let policy = load_policy(cwd);
+    let violations = match staged_violations(cwd, &policy) {
+        Ok(v) => v,
+        Err(reason) => return (1, format!("STATUTOR  {reason}\n")),
+    };
 
     let stdout = violations
         .iter()
@@ -444,7 +590,10 @@ mod tests {
             match_rule("docs/DECISIONS.md", &p).unwrap().policy,
             "append_only"
         );
-        assert_eq!(match_rule("plans/archive/x.md", &p).unwrap().policy, "frozen");
+        assert_eq!(
+            match_rule("plans/archive/x.md", &p).unwrap().policy,
+            "frozen"
+        );
         assert!(match_rule("src/main.rs", &p).is_none());
         assert_eq!(
             match_rule("plans\\archive\\win.md", &p).unwrap().policy,
@@ -458,5 +607,14 @@ mod tests {
             py_list(&["## Gotchas".into(), "## Do not touch".into()]),
             "['## Gotchas', '## Do not touch']"
         );
+    }
+
+    #[test]
+    fn append_only_uses_byte_exact_line_subsequence() {
+        let before = b"first\nsecond\n";
+        assert!(pure_line_insertion(before, b"first\ninserted\nsecond\n"));
+        assert!(!pure_line_insertion(before, b"first\nchanged\n"));
+        assert!(!pure_line_insertion(b"last line", b"last line\nnew\n"));
+        assert!(!pure_line_insertion(before, b"rewritten\0binary\n"));
     }
 }

@@ -1,13 +1,20 @@
 [package]
 name = "statutor"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
-description = "Conformance-gated staged-mode ledger floor: a static statutor-staged binary for server-side pre-receive hooks. Policy kernel stays canonical in Python; this twin exists only while CI proves behavioral equivalence."
+description = "Native staged-index validator for Statutor ledgers, conformance-gated against the canonical Python kernel."
 repository = "https://github.com/hoohugokim/statutor"
-keywords = ["git", "pre-receive", "governance", "ledger", "agents"]
+readme = "README.md"
+keywords = ["git", "pre-commit", "governance", "ledger", "agents"]
 categories = ["development-tools"]
+include = [
+    "/src/lib.rs",
+    "/src/main.rs",
+    "/README.md",
+    "/LICENSE",
+]
 
 [lib]
 name = "statutor"

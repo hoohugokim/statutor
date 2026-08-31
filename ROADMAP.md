@@ -2,15 +2,23 @@
 # ROADMAP
 
 ## Current milestone <!-- agent-visible -->
-v0.3 "hardened + publishable": pytest suite green in CI (T-0001, T-0008),
-names verified (T-0002), Codex/OpenCode adapter claims re-verified on real
-current releases (T-0003, T-0004), plugin install flow tested end-to-end
-(T-0007). Done means: a stranger can `pipx install` + `/plugin install` and
-get enforced ledgers on Claude Code, OpenCode, and the git floor without
-reading this conversation.
+v0.3.1 "truthful trust floor" (T-0023..T-0030): repair the release payload,
+make every record lifecycle and policy-source check match the public doctrine,
+and retract the nonfunctional pre-receive claim until a real ref-range mode
+exists. Done means clean wheel/sdist/npm/crate payloads are tested before
+publication; no governed record or policy can disappear, move, or evade the
+floor through unstaged config, binary diff behavior, or ignored git failures;
+and every install snippet is copy-pasteable and current. Execution spec:
+`plans/v0.3.1-truth-floor.md`.
+
+## Next milestone (human context, agents ignore)
+v0.4 "portable user layer" (T-0031..T-0036): one human-owned global
+instruction source and one managed Agent Skill lifecycle, projected safely to
+Claude Code, Codex, and stable OpenCode with receipts, collision/drift
+diagnostics, reversible adoption, and no clobbering. Full proposed contract:
+`plans/v0.4-global-coordination.md`.
 
 ## Later (human context, agents ignore)
-- crates: Rust staged-floor binary under D-0014's conformance gate (T-0020/T-0021); needs no new D-record
-- Server-side pre-receive recipe around the statutor-staged binary (after T-0022)
+- A real server-side pre-receive/ref-range validator; `staged` mode cannot inspect a bare repo or pushed refs, and D-0014's staged-only scope must be superseded first
 - Additional adapters as hook surfaces stabilize (Codex file-tool events)
 - statutor doctor as a GitHub status check; D-record index tooling

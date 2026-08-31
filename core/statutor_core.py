@@ -277,6 +277,8 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
       * Delete File on a governed constitution/overwrite_bounded/append_only
         path is denied wholesale — records are superseded, never removed
         (state-policy files stay deletable, matching the bash guard's gap);
+      * Move to on those same record policies must remain under the identical
+        rule; state lifecycle in-loop remains part of T-0027;
       * Add File on a sized policy runs the full cap + required-sections
         check (the body is fully known);
       * Update File on append_only denies any deleting/modifying hunk line;
@@ -308,6 +310,11 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
         if move_rel is not None and kind == "frozen":
             return (f"{rel} is frozen (archived plan). Moving a record OUT of "
                     "the archive is denied.")
+        if (move_rel is not None
+                and kind in ("constitution", "overwrite_bounded", "append_only")
+                and _match_rule(move_rel, policy) is not rule):
+            return (f"{rel} is governed ({kind}): moving it to ungoverned path "
+                    f"{move_rel} is denied. Keep it under the same policy rule.")
 
         if t["op"] == "add":
             if kind == "frozen":
@@ -386,53 +393,186 @@ def run_check(argv: list[str]) -> int:
 # entry: staged (git floor — harness-independent backstop)
 # --------------------------------------------------------------------------
 
+class _GitFailure(RuntimeError):
+    """A floor-mode Git operation failed; never silently reinterpret it."""
+
+
+def _git_bytes(cwd: str, *args: str) -> bytes:
+    """Run one floor-mode Git query and return exact stdout bytes.
+
+    Hook mode still fails open at its outer boundary. The staged floor does
+    not: an absent repository, bare repository, unreadable index, or failed
+    blob lookup means Statutor could not prove the transaction safe.
+    """
+    command = ["git", "-c", "color.ui=false", *args]
+    display = "git " + " ".join(args)
+    try:
+        result = subprocess.run(command, cwd=cwd, capture_output=True, check=False)
+    except OSError as exc:
+        raise _GitFailure(
+            f"{display} could not start; staged validation requires a non-bare "
+            "Git worktree with a readable index.") from exc
+    if result.returncode != 0:
+        raise _GitFailure(
+            f"{display} failed (exit {result.returncode}); staged validation "
+            "requires a non-bare Git worktree with a readable index.")
+    return result.stdout
+
+
 def _git(cwd: str, *args: str) -> str:
-    # -c color.ui=false pins machine-readable output: a user gitconfig with
-    # color.ui=always would otherwise ANSI-colorize diff lines, and the
-    # append-only scan (startswith("-")) would silently stop seeing deletions.
-    return subprocess.run(["git", "-c", "color.ui=false", *args], cwd=cwd,
-                          capture_output=True, text=True, check=False).stdout
+    return _git_bytes(cwd, *args).decode("utf-8", "replace")
+
+
+def _staged_changes(cwd: str) -> list[tuple[str, str | None, str | None]]:
+    """Return `(status, old_path, new_path)` from NUL-delimited Git output."""
+    worktree = _git_bytes(cwd, "rev-parse", "--is-inside-work-tree").strip()
+    if worktree != b"true":
+        raise _GitFailure(
+            "git rev-parse --is-inside-work-tree reported no worktree; staged "
+            "validation requires a non-bare Git worktree with a readable index.")
+    args = ("diff", "--cached", "--name-status", "-z", "-M")
+    fields = _git_bytes(cwd, *args).split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    changes: list[tuple[str, str | None, str | None]] = []
+    i = 0
+    while i < len(fields):
+        status = fields[i].decode("ascii", "replace")
+        i += 1
+        paths_needed = 2 if status.startswith(("R", "C")) else 1
+        if not status or i + paths_needed > len(fields):
+            raise _GitFailure(
+                "git diff --cached --name-status -z -M returned malformed output; "
+                "staged validation cannot safely identify changed paths.")
+        paths = [p.decode("utf-8", "replace")
+                 for p in fields[i:i + paths_needed]]
+        i += paths_needed
+        code = status[0]
+        if code == "A":
+            changes.append((status, None, paths[0]))
+        elif code == "D":
+            changes.append((status, paths[0], None))
+        elif code in ("R", "C"):
+            changes.append((status, paths[0], paths[1]))
+        else:
+            changes.append((status, paths[0], paths[0]))
+    return changes
+
+
+def _line_chunks(blob: bytes) -> list[bytes]:
+    """Split on LF while retaining it, matching Git's line identity model."""
+    if not blob:
+        return []
+    parts = blob.split(b"\n")
+    lines = [part + b"\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
+def _is_pure_line_insertion(before: bytes, after: bytes) -> bool:
+    """True when every original line survives byte-for-byte and in order."""
+    original = _line_chunks(before)
+    if not original:
+        return True
+    matched = 0
+    for candidate in _line_chunks(after):
+        if candidate == original[matched]:
+            matched += 1
+            if matched == len(original):
+                return True
+    return False
+
+
+_LIFECYCLE_POLICIES = {"constitution", "overwrite_bounded", "append_only", "state"}
+
+
+def _frozen_reason(path: str) -> str:
+    return (f"{path}: frozen — archived records are immutable "
+            "(moving a plan INTO the archive is allowed).")
+
+
+def _direct_frozen_add_reason(path: str) -> str:
+    return (f"{path}: frozen — direct additions to the archive are denied "
+            "(move an existing plan INTO the archive instead).")
+
+
+def _lifecycle_reason(path: str, kind: str, destination: str | None) -> str:
+    if destination is None:
+        return (f"{path}: governed ({kind}) record cannot be deleted; "
+                "supersede it without removing its governed path.")
+    return (f"{path}: governed ({kind}) record cannot move to ungoverned path "
+            f"{destination}; keep it under the same policy rule.")
 
 
 def run_staged(cwd: str) -> int:
     policy = load_policy(cwd)
     violations: list[str] = []
+    try:
+        changes = _staged_changes(cwd)
 
-    for line in _git(cwd, "diff", "--cached", "--name-status", "-M").splitlines():
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        status, paths = parts[0], parts[1:]
-        old, new = (paths[0], paths[-1])
-        for p, arriving in ((old, False), (new, True)) if status.startswith("R") \
-                else ((new, status.startswith("A")),):
-            rule = _match_rule(p, policy)
-            if rule and rule.get("policy") == "frozen" and not arriving:
-                violations.append(f"{p}: frozen — archived records are immutable "
-                                  "(moving a plan INTO the archive is allowed).")
+        # Pass 1: record lifecycle and frozen-path transitions.
+        for status, old, new in changes:
+            code = status[0]
+            old_rule = _match_rule(old, policy) if old is not None else None
+            new_rule = _match_rule(new, policy) if new is not None else None
+            old_kind = old_rule.get("policy", "") if old_rule else ""
+            new_kind = new_rule.get("policy", "") if new_rule else ""
 
-    for path in _git(cwd, "diff", "--cached", "--name-only").splitlines():
-        rule = _match_rule(path, policy)
-        if not rule:
-            continue
-        kind = rule.get("policy", "")
-        if kind == "append_only":
-            diff = _git(cwd, "diff", "--cached", "-U0", "--", path)
-            dels = [l for l in diff.splitlines()
-                    if l.startswith("-") and not l.startswith("---")]
-            if dels:
-                violations.append(
-                    f"{path}: append-only, but staged diff deletes/modifies "
-                    f"{len(dels)} line(s). Append superseding records instead.")
-        elif kind in ("overwrite_bounded", "constitution"):
-            blob = _git(cwd, "show", f":{path}")
-            n = blob.count("\n") + 1
-            cap = int(rule.get("max_lines", rule.get("hard_max_lines", 200)))
-            if n > cap:
-                violations.append(f"{path}: staged version is {n} lines (cap {cap}).")
-            missing = [s for s in rule.get("required_sections", []) if s not in blob]
-            if missing:
-                violations.append(f"{path}: missing sections {missing}.")
+            if code == "D":
+                if old_kind == "frozen":
+                    violations.append(_frozen_reason(old))
+                elif old_kind in _LIFECYCLE_POLICIES:
+                    violations.append(_lifecycle_reason(old, old_kind, None))
+                continue
+
+            if code == "R":
+                if old_kind == "frozen":
+                    violations.append(_frozen_reason(old))
+                elif (old_kind in _LIFECYCLE_POLICIES
+                      and new_rule is not old_rule):
+                    violations.append(_lifecycle_reason(old, old_kind, new))
+                # A rename is the sole supported way to arrive in frozen.
+                continue
+
+            if new_kind == "frozen":
+                if code in ("A", "C"):
+                    violations.append(_direct_frozen_add_reason(new))
+                else:
+                    violations.append(_frozen_reason(new))
+
+        # Pass 2: policies on candidate blobs. Deleted paths have no candidate.
+        for status, old, path in changes:
+            if path is None:
+                continue
+            rule = _match_rule(path, policy)
+            if not rule:
+                continue
+            kind = rule.get("policy", "")
+            code = status[0]
+            if kind == "append_only":
+                baseline = b""
+                old_rule = _match_rule(old, policy) if old is not None else None
+                if (code in ("M", "T") or
+                        (code == "R" and old_rule is rule)):
+                    baseline = _git_bytes(cwd, "show", f"HEAD:{old}")
+                candidate = _git_bytes(cwd, "show", f":{path}")
+                if not _is_pure_line_insertion(baseline, candidate):
+                    violations.append(
+                        f"{path}: append-only, but staged content deletes, rewrites, "
+                        "or reorders existing lines. Append superseding records instead.")
+            elif kind in ("overwrite_bounded", "constitution"):
+                blob = _git_bytes(cwd, "show", f":{path}").decode("utf-8", "replace")
+                n = blob.count("\n") + 1
+                cap = int(rule.get("max_lines", rule.get("hard_max_lines", 200)))
+                if n > cap:
+                    violations.append(f"{path}: staged version is {n} lines (cap {cap}).")
+                missing = [s for s in rule.get("required_sections", []) if s not in blob]
+                if missing:
+                    violations.append(f"{path}: missing sections {missing}.")
+    except _GitFailure as exc:
+        print(f"STATUTOR  {exc}")
+        return 1
 
     for v in violations:
         print(f"STATUTOR  {v}")

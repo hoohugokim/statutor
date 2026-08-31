@@ -1,35 +1,38 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-24 by `pypi.org/pypi/statutor/json → 0.3.0 live (whl+sdist, trusted-published); pytest 267 passed/10 skipped; doctor clean`
+last_verified: 2026-08-31 by `fresh cargo → 5 passed; Python↔Rust conformance → 42 passed/2 skipped; full pytest → 297 passed/12 skipped; package audit → 3 passed; doctor + staged clean`
 
 ## Goal
-statutor v0.3 SHIPPED AND VERIFIED: public repo, three registries carrying
-real artifacts, four enforced surfaces, queue empty.
+Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
+layer for global instructions and skills across Claude, Codex, and OpenCode.
 
 ## Last verified state
-EVERYTHING DONE 2026-08-24. PyPI serves statutor 0.3.0 (published
-tokenless by publish.yml on the v0.3.0 tag — first run of that pipeline).
-npm statutor@0.1.0 (OpenCode adapter); crates.io statutor 0.1.0
-(statutor-staged static floor). Repo public. TASKS empty; ledger doctor
-clean; plans all archived. Kernel color fix in; Rust twin byte-identical
-under the CI conformance gate (D-0014).
+v0.3 shipped; the 2026-08-31 audit found lifecycle, trust, and claim blockers.
+D-0015 fixes the trust contract: HEAD/index snapshots, kernel meta-rules, and
+exact-tree approval receipts. Package cleanup removed all 83 tracked Cargo
+build files (13.4 MB in Git); exact 0.1.1 Cargo/npm payload audits are in CI.
+The lifecycle floor now denies record deletion/rename-out and direct frozen
+arrival in Python and Rust. Append-only checks raw HEAD/index line identity,
+so NUL data or attributes cannot hide rewrites. Git query failures and
+bare/non-repository invocations deny; only interactive hook mode fails open.
 
 ## Next action
-Nothing owed. Post-release ideas live in ROADMAP "Later" (server-side
-pre-receive recipe around statutor-staged, doctor as GitHub status check,
-D-record index tooling, Codex file-tool adapter events). Homebrew tap and
-APT channels: deliberately deferred — revisit only on real demand; each
-channel adds a permanent release-tax workflow.
+Execute T-0026: implement D-0015 policy snapshots, meta-rules, and receipts;
+then fix cross-layer line/YAML/path/Edit semantics. Keep false pre-receive
+claims out of the next release. Promote v0.4 only after the repair gate closes;
+its full contract is in
+`plans/v0.4-global-coordination.md`. Dogfood against the real home only after
+separate explicit approval.
 
 ## Gotchas
-PyPI versions immutable (0.2.0/0.3.0 burned). rust-conformance CI green
-is the Rust duplicate's license to exist (D-0014) — never skip it.
-Conformance yaml scenarios skip locally without PyYAML but run in CI.
-Tests via /opt/homebrew/bin/pytest. DECISIONS.md keeps its writ header
-marker. Child harnesses get explicit cwd always.
+Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds
+are authoritative again. The old target backup remains at
+`/private/tmp/statutor-target-backup.vi3x2C/target`. `assets/` and `notes/` are
+pre-existing untracked human work: do not edit/add. DECISIONS keeps writ marker.
 
 ## Do not touch
 Embedded TEMPLATES dict (single source — no templates/ dir); root location of
 `.pre-commit-hooks.yaml`; top-level plugin layout (hooks/, commands/, skills/);
-crates/statutor scope must stay staged-only (D-0014) — no interactive modes.
+crates/statutor remains staged-only under D-0014 until a superseding decision;
+plans/archive is frozen; existing global home config is outside this task.

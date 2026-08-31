@@ -41,15 +41,10 @@ GIT_ENV = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1",
 
 # --------------------------------------------------------------------------
 # guard: isolate every git subprocess this suite spawns from the developer's
-# real ~/.gitconfig, INCLUDING the ones statutor_core._git() spawns in-process
-# (run_staged tests call statutor_core.run_staged() directly, not through the
-# `git()` helper below — _git() has no explicit env=, so it inherits
-# whatever this process's os.environ says). Without this, a global
-# `color.ui = always` (or `color.diff = always`) makes git colorize the
-# `git diff --cached -U0` output run_staged() parses; colored deletion
-# lines start with an ANSI escape instead of "-", so the append-only floor
-# silently stops catching deletions. See DECISIONS.md / HANDOFF.md for the
-# matching kernel-side gap (statutor_core._git() itself isn't fixed here).
+# real ~/.gitconfig, INCLUDING the ones statutor_core._git_bytes() spawns
+# in-process. T-0025 no longer parses rendered diffs for append-only checks,
+# but hermetic config still prevents user aliases/attributes from changing
+# unrelated Git behavior and preserves the hostile-color regression.
 # --------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True, scope="session")
@@ -797,6 +792,21 @@ def test_apply_patch_move_into_archive_allowed(tmp_path):
               "*** Move to: plans/archive/p1.md") is None
 
 
+@pytest.mark.parametrize("source,destination,policy_name", [
+    ("AGENTS.md", "CONSTITUTION.md", "constitution"),
+    ("HANDOFF.md", "SHIFT.md", "overwrite_bounded"),
+    ("DECISIONS.md", "HISTORY.md", "append_only"),
+])
+def test_apply_patch_move_governed_record_to_ungoverned_path_denied(
+        tmp_path, source, destination, policy_name):
+    result = ap(tmp_path,
+                f"*** Update File: {source}",
+                f"*** Move to: {destination}")
+    assert result is not None
+    assert f"governed ({policy_name})" in result
+    assert destination in result
+
+
 def test_apply_patch_add_handoff_over_cap_denied(tmp_path):
     body = "\n".join(f"+l{i}" for i in range(41))
     result = ap(tmp_path, f"*** Add File: HANDOFF.md\n{body}")
@@ -1087,7 +1097,8 @@ def test_staged_deletion_denied(ledger_repo, capsys):
     code = statutor_core.run_staged(str(ledger_repo))
     out = capsys.readouterr().out
     assert code == 1
-    assert "DECISIONS.md: append-only, but staged diff deletes/modifies 1 line(s)." in out
+    assert ("DECISIONS.md: append-only, but staged content deletes, rewrites, "
+            "or reorders existing lines.") in out
 
 
 @git_required
@@ -1098,17 +1109,58 @@ def test_staged_in_place_modification_counts_as_deletion(ledger_repo, capsys):
     code = statutor_core.run_staged(str(ledger_repo))
     out = capsys.readouterr().out
     assert code == 1
-    assert "DECISIONS.md: append-only, but staged diff deletes/modifies 1 line(s)." in out
+    assert ("DECISIONS.md: append-only, but staged content deletes, rewrites, "
+            "or reorders existing lines.") in out
 
 
 @git_required
 def test_staged_whole_file_rm_denied(ledger_repo, capsys):
-    n = len((ledger_repo / "DECISIONS.md").read_text().splitlines())
     git(ledger_repo, "rm", "-q", "DECISIONS.md")
     code = statutor_core.run_staged(str(ledger_repo))
     out = capsys.readouterr().out
     assert code == 1
-    assert f"DECISIONS.md: append-only, but staged diff deletes/modifies {n} line(s)." in out
+    assert "DECISIONS.md: governed (append_only) record cannot be deleted" in out
+
+
+@pytest.mark.parametrize("path,policy_name", [
+    ("AGENTS.md", "constitution"),
+    ("HANDOFF.md", "overwrite_bounded"),
+    ("TASKS.md", "state"),
+])
+@git_required
+def test_staged_governed_record_file_deletion_denied(
+        ledger_repo, capsys, path, policy_name):
+    git(ledger_repo, "rm", "-q", path)
+    code = statutor_core.run_staged(str(ledger_repo))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert f"{path}: governed ({policy_name}) record cannot be deleted" in out
+
+
+@pytest.mark.parametrize("source,destination,policy_name", [
+    ("AGENTS.md", "CONSTITUTION.md", "constitution"),
+    ("HANDOFF.md", "SHIFT.md", "overwrite_bounded"),
+    ("DECISIONS.md", "HISTORY.md", "append_only"),
+    ("TASKS.md", "BACKLOG.md", "state"),
+])
+@git_required
+def test_staged_governed_record_rename_out_denied(
+        ledger_repo, capsys, source, destination, policy_name):
+    git(ledger_repo, "mv", source, destination)
+    code = statutor_core.run_staged(str(ledger_repo))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert f"{source}: governed ({policy_name}) record cannot move" in out
+    assert destination in out
+
+
+@git_required
+def test_staged_governed_rename_within_same_rule_allowed(ledger_repo, capsys):
+    (ledger_repo / "docs").mkdir()
+    git(ledger_repo, "mv", "DECISIONS.md", "docs/DECISIONS.md")
+    code = statutor_core.run_staged(str(ledger_repo))
+    assert code == 0
+    assert capsys.readouterr().out == ""
 
 
 @git_required
@@ -1122,7 +1174,42 @@ def test_staged_no_trailing_newline_append_reads_as_deletion_quirk(tmp_path, cap
     code = statutor_core.run_staged(str(tmp_path))
     out = capsys.readouterr().out
     assert code == 1
-    assert "DECISIONS.md: append-only, but staged diff deletes/modifies 1 line(s)." in out
+    assert "append-only, but staged content deletes, rewrites" in out
+
+
+@git_required
+def test_staged_append_only_insertion_between_existing_lines_allowed(
+        ledger_repo, capsys):
+    path = ledger_repo / "DECISIONS.md"
+    path.write_text(path.read_text().replace(
+        "# DECISIONS\n\n", "# DECISIONS\ninserted context\n\n"), encoding="utf-8")
+    git(ledger_repo, "add", "DECISIONS.md")
+    code = statutor_core.run_staged(str(ledger_repo))
+    assert code == 0
+    assert capsys.readouterr().out == ""
+
+
+@git_required
+def test_staged_append_only_binary_rewrite_denied(ledger_repo, capsys):
+    (ledger_repo / "DECISIONS.md").write_bytes(b"rewritten\x00binary\n")
+    git(ledger_repo, "add", "DECISIONS.md")
+    code = statutor_core.run_staged(str(ledger_repo))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "append-only, but staged content deletes, rewrites" in out
+
+
+@git_required
+def test_staged_append_only_ignores_unstaged_diff_attribute(ledger_repo, capsys):
+    (ledger_repo / ".gitattributes").write_text(
+        "DECISIONS.md -diff\n", encoding="utf-8")
+    (ledger_repo / "DECISIONS.md").write_text(
+        "# DECISIONS\n\nwholesale rewrite\n", encoding="utf-8")
+    git(ledger_repo, "add", "DECISIONS.md")
+    code = statutor_core.run_staged(str(ledger_repo))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "append-only, but staged content deletes, rewrites" in out
 
 
 @git_required
@@ -1156,12 +1243,13 @@ def test_staged_archive_deletion_frozen_denied(ledger_repo, capsys):
 
 
 @git_required
-def test_staged_new_file_added_under_archive_exempt_quirk(ledger_repo, capsys):
+def test_staged_new_file_added_under_archive_denied(ledger_repo, capsys):
     (ledger_repo / "plans" / "archive" / "brand_new.md").write_text("x\n", encoding="utf-8")
     git(ledger_repo, "add", "plans/archive/brand_new.md")
     code = statutor_core.run_staged(str(ledger_repo))
-    assert code == 0
-    assert capsys.readouterr().out == ""
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "direct additions to the archive are denied" in out
 
 
 @git_required
@@ -1273,10 +1361,31 @@ def test_staged_three_violations_frozen_first(ledger_repo, capsys):
 
 
 @git_required
-def test_staged_not_a_git_repo_fails_open(tmp_path, capsys):
+def test_staged_not_a_git_repo_fails_closed(tmp_path, capsys):
     code = statutor_core.run_staged(str(tmp_path))
-    assert code == 0
-    assert capsys.readouterr().out == ""
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "git rev-parse --is-inside-work-tree failed" in out
+    assert "non-bare Git worktree with a readable index" in out
+
+
+@git_required
+def test_staged_bare_repo_fails_closed(tmp_path, capsys):
+    git(tmp_path, "init", "--bare", "-q", ".")
+    code = statutor_core.run_staged(str(tmp_path))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "reported no worktree" in out
+    assert "non-bare Git worktree" in out
+
+
+@git_required
+def test_staged_missing_index_fails_closed(ledger_repo, capsys):
+    os.unlink(ledger_repo / ".git" / "index")
+    code = statutor_core.run_staged(str(ledger_repo))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "record cannot be deleted" in out or "git " in out
 
 
 @git_required
@@ -1325,12 +1434,7 @@ def test_staged_repo_local_statutor_yaml_governed_empty(tmp_path, capsys):
 
 @git_required
 def test_staged_color_ui_always_config_still_detects_deletions(ledger_repo, capsys, monkeypatch, tmp_path):
-    """statutor_core._git() spawns `git -c color.ui=false ...`, so a real
-    ~/.gitconfig with `color.ui = always` cannot ANSI-colorize the
-    `git diff --cached -U0` output: deletion lines keep their "-" prefix and
-    the append-only floor keeps catching them (regression: the pre-fix
-    kernel silently passed a real deletion under this config; fixed alongside
-    the Rust port so both kernels ship corrected behavior, D-0014)."""
+    """A hostile color config cannot affect NUL metadata or raw blob checks."""
     colorful_gitconfig = tmp_path / "colorful.gitconfig"
     colorful_gitconfig.write_text("[color]\n\tui = always\n", encoding="utf-8")
     path = ledger_repo / "DECISIONS.md"
@@ -1341,7 +1445,7 @@ def test_staged_color_ui_always_config_still_detects_deletions(ledger_repo, caps
     code = statutor_core.run_staged(str(ledger_repo))
     out = capsys.readouterr().out
     assert code == 1
-    assert "append-only, but staged diff deletes/modifies 1 line(s)." in out
+    assert "append-only, but staged content deletes, rewrites" in out
 
 
 @git_required

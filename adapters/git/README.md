@@ -2,10 +2,11 @@
 
 Every harness and every human converges at `git commit`, so this layer is
 enforcement nothing can route around (add a server-side pre-receive running
-`statutor staged` for absolute enforcement). Checks: append-only = zero deleted
-lines in DECISIONS.md's staged diff; frozen = no modification/deletion under
-plans/archive/ (moving a plan INTO the archive is allowed); HANDOFF/AGENTS
-staged blobs against caps and required sections.
+`statutor staged` for absolute enforcement). Checks: governed record files
+cannot disappear or leave their policy rule; append-only HEAD lines must remain
+byte-identical and ordered in the index; frozen paths deny direct arrival,
+modification, and departure while allowing rename-in; HANDOFF/AGENTS staged
+blobs are checked against caps and required sections. Git query failures deny.
 
 For servers without a Python runtime, `crates/statutor/` builds a static,
 conformance-gated twin binary (`statutor-staged`) with byte-identical

@@ -9,7 +9,7 @@
    // opencode.json
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugin": ["statutor"]          // pin with "statutor@0.1.0"
+     "plugin": ["statutor"]          // pin with "statutor@0.1.1"
    }
    ```
 

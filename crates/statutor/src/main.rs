@@ -1,8 +1,8 @@
-//! `statutor-staged [DIR]` — static git-floor binary.
+//! `statutor-staged [DIR]` — native local git-floor binary.
 //!
 //! Byte-compatible twin of `statutor staged` (see lib.rs and DECISIONS.md
-//! D-0014). Intended for server-side pre-receive hooks where no Python
-//! runtime exists; interactive surfaces stay with the Python CLI.
+//! D-0014). Intended for local pre-commit and CI checks of a working tree's
+//! staged index; interactive surfaces stay with the Python CLI.
 
 use std::process::exit;
 

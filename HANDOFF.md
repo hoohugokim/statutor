@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `full pytest 326/5; fresh cargo 6; conformance 54; package audit 3; fmt/diff/compile clean`
+last_verified: 2026-08-31 by `full pytest 347/5; fresh cargo 7; conformance 61; package audit 3; doctor/fmt/diff clean`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -9,19 +9,18 @@ layer for global instructions and skills across Claude, Codex, and OpenCode.
 
 ## Last verified state
 v0.3 shipped; the 2026-08-31 audit found lifecycle, trust, and claim blockers.
-T-0026 implements D-0015: strict dependency-free policy parsing, committed
-HEAD baseline plus index candidate judgment, non-configurable trust roots,
-and mode-0600 exact-tree receipts. Physical lines, quoted caps, explicit-CWD
-paths, and sized Edit checks now agree across Python/Rust. The floor carries
-52 semantic scenarios; malformed policy and Git failures deny. Hooks retain
-their outer fail-open boundary. Package cleanup and exact 0.1.1 audits remain.
+T-0026 implements D-0015's dual-snapshot trust floor and exact-tree receipts.
+T-0027 implements D-0016 state identity: existing task IDs survive; checkbox,
+detail, and order may change; new IDs advance beyond the committed maximum.
+Shell/editor/apply_patch, doctor, and both floors enforce the contract. The
+floor carries 59 semantic scenarios; malformed policy/Git failures deny and
+hooks retain their outer fail-open boundary. Exact 0.1.1 audits remain green.
 
 ## Next action
-Execute T-0027: define conservative TASKS state semantics, append the decision,
-then enforce stable unique IDs and permitted checkbox/detail transitions in
-shell, editor, apply_patch, staged Python, and Rust. Keep false pre-receive
-claims out of v0.3.1. Promote v0.4 only after the repair gate closes; real-home
-dogfood still requires separate explicit approval.
+Execute T-0028: make doctor/Stop aggregate safely across invalid dates and
+policy drift, resolve nested roots, ignore generic AGENTS-only repos, and remove
+stale command text. Then perform T-0029's public truth sweep. Keep false
+pre-receive claims out of v0.3.1; real-home dogfood remains separately gated.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

@@ -490,6 +490,51 @@ def s52_exact_tree_receipt_authorizes_policy_change(root: Path) -> None:
         cwd=root, env=GIT_ENV, capture_output=True, text=True, check=True)
 
 
+def s53_state_checkbox_detail_reorder_add_allowed(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text(
+        "- [ ] T-0002 new second\n- [x] T-0001 revised done\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s54_state_existing_id_removal_denied(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text("# TASKS\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s55_state_id_rewrite_denied(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text("- [ ] T-0002 rewritten identity\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s56_state_duplicate_id_denied(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text(
+        "- [ ] T-0001 one\n- [x] T-0001 duplicate\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s57_state_malformed_entry_denied(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text("- [maybe] T-0001 invalid\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s58_state_new_id_must_advance(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_text(
+        "- [ ] T-0001 one\n- [ ] T-0000 reused\n", encoding="utf-8")
+    git(root, "add", "TASKS.md")
+
+
+def s59_state_binary_denied(root: Path) -> None:
+    base_ledger(root)
+    (root / "TASKS.md").write_bytes(b"- [ ] T-0001 one\n\xff\n")
+    git(root, "add", "TASKS.md")
+
+
 SCENARIOS = {
     name: fn
     for name, fn in sorted(globals().items())

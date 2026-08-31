@@ -183,6 +183,17 @@ def test_missing_governed_file_errors(tmp_path, monkeypatch, capsys):
     assert "ERROR missing governed file: TASKS.md" in out
 
 
+@pytest.mark.parametrize("tasks,fragment", [
+    ("- [ ] T-0001 one\n- [x] T-0001 duplicate\n", "duplicate state task ID T-0001"),
+    ("- [maybe] T-0001 malformed\n", "state line 1 must be"),
+])
+def test_invalid_state_entries_error(tmp_path, monkeypatch, capsys, tasks, fragment):
+    _write_ledger(tmp_path, overrides={"TASKS.md": tasks})
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 1
+    assert fragment in out
+
+
 def test_agents_over_soft_budget_warns(tmp_path, monkeypatch, capsys):
     long_agents = "# AGENTS\n" + "line\n" * 130  # 131 lines > default 120
     _write_ledger(tmp_path, overrides={"AGENTS.md": long_agents})

@@ -9,13 +9,19 @@ and exactly one writer, enforced by hooks and git, not by prose.
 |---|---|---|---|
 | Constitution | AGENTS.md (+ CLAUDE.md = `@AGENTS.md`) | hard cap 200 lines | hook + git floor |
 | State | HANDOFF.md | overwrite-only, ≤ 40 lines, required sections | hook + git floor |
-| State | TASKS.md | stable T-NNNN ids | doctor |
+| State | TASKS.md | stable T-NNNN ids; mutable checkbox/detail/order | hook + git floor + doctor |
 | Log | DECISIONS.md | append-only, insertions only, supersede-never-edit | hook + git floor |
 | Plan | ROADMAP.md, plans/ → plans/archive/ (frozen) | archive immutable | hook + git floor |
 
 Plus a **bash guard** on every harness: shell writes to governed files
 (`>>`, `sed -i`, `tee`, ...) are denied — the editor tools are the audited
 path. No hand-maintained CHANGELOG.md: git log + conventional commits.
+
+State task identities are durable: an existing ID cannot disappear or be
+renamed, while its checkbox, detail, and position may change. New IDs advance
+beyond the committed maximum. v0.3.1 intentionally has no pruning operation;
+completed entries remain until a separately specified identity-preserving
+archive exists (D-0016).
 
 ## Kernel / adapter architecture
 

@@ -11,6 +11,7 @@
 //! on every scenario; divergence fails CI. The policy kernel stays
 //! canonical in Python.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -709,6 +710,80 @@ fn line_count(blob: &str) -> i64 {
     }
 }
 
+fn state_tasks(content: &str, path: &str) -> Result<HashMap<String, u64>, String> {
+    let mut tasks = HashMap::new();
+    for (index, line) in content.lines().enumerate() {
+        if !line.starts_with("- [") {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let valid_prefix = bytes.len() >= 7
+            && matches!(bytes[3], b' ' | b'x' | b'X')
+            && bytes[4] == b']'
+            && bytes[5] == b' ';
+        let parsed = valid_prefix.then(|| &line[6..]).and_then(|rest| {
+            let (task_id, detail) = rest.split_once(' ')?;
+            let digits = task_id.strip_prefix("T-")?;
+            if digits.len() < 4
+                || !digits.chars().all(|ch| ch.is_ascii_digit())
+                || detail.is_empty()
+            {
+                return None;
+            }
+            Some((task_id.to_string(), digits.parse::<u64>().ok()?))
+        });
+        let Some((task_id, number)) = parsed else {
+            return Err(format!(
+                "{path}: state line {} must be `- [ ] T-NNNN detail` or \
+`- [x] T-NNNN detail`.",
+                index + 1
+            ));
+        };
+        if tasks.insert(task_id.clone(), number).is_some() {
+            return Err(format!("{path}: duplicate state task ID {task_id}."));
+        }
+    }
+    Ok(tasks)
+}
+
+fn state_reason(path: &str, candidate: &str, baseline: Option<&str>) -> Option<String> {
+    let candidate_tasks = match state_tasks(candidate, path) {
+        Ok(tasks) => tasks,
+        Err(reason) => return Some(reason),
+    };
+    let Some(baseline) = baseline else {
+        return None;
+    };
+    let baseline_tasks = match state_tasks(baseline, &format!("HEAD:{path}")) {
+        Ok(tasks) => tasks,
+        Err(reason) => return Some(reason),
+    };
+    let mut missing: Vec<String> = baseline_tasks
+        .keys()
+        .filter(|task_id| !candidate_tasks.contains_key(*task_id))
+        .cloned()
+        .collect();
+    missing.sort();
+    if !missing.is_empty() {
+        return Some(format!(
+            "{path}: state task IDs cannot disappear or change: {}. \
+Keep completed tasks in place.",
+            py_list(&missing)
+        ));
+    }
+    if let Some(maximum) = baseline_tasks.values().max() {
+        for (task_id, number) in &candidate_tasks {
+            if !baseline_tasks.contains_key(task_id) && number <= maximum {
+                return Some(format!(
+                    "{path}: new task ID {task_id} must be greater than existing \
+maximum T-{maximum:04}."
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn pure_line_insertion(before: &[u8], after: &[u8]) -> bool {
     let original: Vec<&[u8]> = before.split_inclusive(|b| *b == b'\n').collect();
     if original.is_empty() {
@@ -815,6 +890,36 @@ or reorders existing lines. Append superseding records instead."
                     .collect();
                 if !missing.is_empty() {
                     violations.push(format!("{path}: missing sections {}.", py_list(&missing)));
+                }
+            }
+            "state" => {
+                let bytes = git(cwd, &["show", &format!(":{path}")])?;
+                let candidate = match String::from_utf8(bytes) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        violations.push(format!("{path}: state content must be valid UTF-8 text."));
+                        continue;
+                    }
+                };
+                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
+                let same_rule = matches!(old_rule, Some(old) if std::ptr::eq(old, rule));
+                let baseline = if matches!(code, 'M' | 'T') || (code == 'R' && same_rule) {
+                    let old = change.old.as_deref().unwrap_or("");
+                    let bytes = git(cwd, &["show", &format!("HEAD:{old}")])?;
+                    match String::from_utf8(bytes) {
+                        Ok(text) => Some(text),
+                        Err(_) => {
+                            violations.push(format!(
+                                "HEAD:{old}: state content must be valid UTF-8 text."
+                            ));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if let Some(reason) = state_reason(path, &candidate, baseline.as_deref()) {
+                    violations.push(reason);
                 }
             }
             _ => {}
@@ -959,5 +1064,20 @@ mod tests {
         assert_eq!(line_count("one"), 1);
         assert_eq!(line_count("one\n"), 1);
         assert_eq!(line_count("one\ntwo\n"), 2);
+    }
+
+    #[test]
+    fn state_ids_are_stable_while_details_and_order_may_change() {
+        let baseline = "- [ ] T-0001 first\n- [ ] T-0002 second\n";
+        let allowed = "- [x] T-0002 revised\n- [ ] T-0001 first revised\n- [ ] T-0003 new\n";
+        assert_eq!(state_reason("TASKS.md", allowed, Some(baseline)), None);
+        let removed = "- [ ] T-0001 first\n";
+        assert!(state_reason("TASKS.md", removed, Some(baseline))
+            .unwrap()
+            .contains("T-0002"));
+        let reused = "- [ ] T-0001 first\n- [ ] T-0002 second\n- [ ] T-0000 reused\n";
+        assert!(state_reason("TASKS.md", reused, Some(baseline))
+            .unwrap()
+            .contains("greater than existing maximum"));
     }
 }

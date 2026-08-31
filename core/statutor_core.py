@@ -333,6 +333,48 @@ def _physical_line_count(content: str | bytes) -> int:
     return content.count(newline) + (0 if content.endswith(newline) else 1)
 
 
+_TASK_LINE_RE = re.compile(r"^- \[([ xX])\] (T-(\d{4,}))\s+(.+)$")
+
+
+def _state_tasks(content: str, path: str) -> tuple[dict[str, tuple[int, str, str]], str | None]:
+    """Parse one-line task entries; prose/headings remain unrestricted."""
+    tasks: dict[str, tuple[int, str, str]] = {}
+    for lineno, line in enumerate(content.splitlines(), 1):
+        if not line.startswith("- ["):
+            continue
+        match = _TASK_LINE_RE.fullmatch(line)
+        if not match:
+            return {}, (f"{path}: state line {lineno} must be `- [ ] T-NNNN detail` "
+                        "or `- [x] T-NNNN detail`.")
+        checkbox, task_id, number, detail = match.groups()
+        if task_id in tasks:
+            return {}, f"{path}: duplicate state task ID {task_id}."
+        tasks[task_id] = (int(number), checkbox.lower(), detail)
+    return tasks, None
+
+
+def _state_reason(path: str, candidate: str, baseline: str | None = None) -> str | None:
+    candidate_tasks, error = _state_tasks(candidate, path)
+    if error:
+        return error
+    if baseline is None:
+        return None
+    baseline_tasks, error = _state_tasks(baseline, f"HEAD:{path}")
+    if error:
+        return error
+    missing = sorted(set(baseline_tasks) - set(candidate_tasks))
+    if missing:
+        return (f"{path}: state task IDs cannot disappear or change: {missing}. "
+                "Keep completed tasks in place.")
+    if baseline_tasks:
+        maximum = max(value[0] for value in baseline_tasks.values())
+        for task_id, (number, _, _) in candidate_tasks.items():
+            if task_id not in baseline_tasks and number <= maximum:
+                return (f"{path}: new task ID {task_id} must be greater than existing "
+                        f"maximum T-{maximum:04d}.")
+    return None
+
+
 # --------------------------------------------------------------------------
 # core validation (pure): returns denial reason or None
 # --------------------------------------------------------------------------
@@ -381,6 +423,26 @@ def validate(tool: str, payload: dict, cwd: str, policy: dict | None = None) -> 
             if reason:
                 return reason
 
+    if kind == "state":
+        candidate: str | None = None
+        try:
+            existing = open(absolute_path, encoding="utf-8").read()
+        except FileNotFoundError:
+            existing = ""
+        except OSError:
+            existing = None
+        if tool == "write":
+            candidate = payload.get("content", "")
+        elif existing is not None:
+            old = payload.get("old_string", "")
+            if old and old in existing:
+                count = -1 if payload.get("replace_all", False) else 1
+                candidate = existing.replace(old, payload.get("new_string", ""), count)
+        if candidate is not None:
+            reason = _state_reason(rel, candidate, existing)
+            if reason:
+                return reason
+
     if kind == "append_only":
         if tool == "edit":
             old = payload.get("old_string", "")
@@ -412,7 +474,7 @@ def guard_bash(command: str, policy: dict) -> str | None:
     if not policy.get("bash_guard", True) or not command:
         return None
     names = [os.path.basename(r.get("pattern", "")) for r in policy.get("governed", [])
-             if r.get("policy") in ("append_only", "overwrite_bounded", "constitution")
+             if r.get("policy") in ("append_only", "overwrite_bounded", "constitution", "state")
              and "*" not in r.get("pattern", "")]
     hit = [n for n in names if n and n in command]
     if hit and any(re.search(p, command) for p in WRITEISH):
@@ -506,15 +568,14 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
 
       * any touch of a frozen path is denied (arrival INTO plans/archive/
         stays allowed, matching the staged rename rule);
-      * Delete File on a governed constitution/overwrite_bounded/append_only
-        path is denied wholesale — records are superseded, never removed
-        (state-policy files stay deletable, matching the bash guard's gap);
-      * Move to on those same record policies must remain under the identical
-        rule; state lifecycle in-loop remains part of T-0027;
+      * Delete File on any governed record path is denied wholesale — records
+        are superseded or completed, never removed;
+      * Move to on any record policy must remain under the identical rule;
       * Add File on a sized policy runs the full cap + required-sections
         check (the body is fully known);
       * Update File on append_only denies any deleting/modifying hunk line;
-        on sized policies it estimates the resulting line count from the
+        state updates must retain every removed task ID; sized policies
+        estimate the resulting line count from the
         on-disk file plus adds-minus-dels (required sections cannot be
         verified from a partial diff — the git floor covers that).
 
@@ -533,7 +594,7 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
         if t["op"] == "delete":
             if kind == "frozen":
                 return f"{rel} is frozen (archived plan). Archived records are immutable."
-            if kind in ("constitution", "overwrite_bounded", "append_only"):
+            if kind in ("constitution", "overwrite_bounded", "append_only", "state"):
                 return (f"{rel} is governed ({kind}): apply_patch cannot delete it. "
                         "Records are superseded, never removed.")
             continue
@@ -543,7 +604,7 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
             return (f"{rel} is frozen (archived plan). Moving a record OUT of "
                     "the archive is denied.")
         if (move_rel is not None
-                and kind in ("constitution", "overwrite_bounded", "append_only")
+                and kind in ("constitution", "overwrite_bounded", "append_only", "state")
                 and _match_rule(move_rel, policy) is not rule):
             return (f"{rel} is governed ({kind}): moving it to ungoverned path "
                     f"{move_rel} is denied. Keep it under the same policy rule.")
@@ -556,6 +617,10 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
             reason = _size_reason(rel, kind, rule, "\n".join(t["content"]))
             if reason:
                 return reason
+            if kind == "state":
+                reason = _state_reason(rel, "\n".join(t["content"]))
+                if reason:
+                    return reason
             continue
 
         # update
@@ -568,6 +633,24 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
             if dels:
                 return (f"{rel} is append-only, but the patch deletes/modifies "
                         f"{dels} line(s). Append superseding records instead.")
+            continue
+        if kind == "state":
+            removed_ids = {
+                match.group(2) for line in t["minus"]
+                if (match := _TASK_LINE_RE.fullmatch(line[1:]))
+            }
+            added_ids = {
+                match.group(2) for line in t["plus"]
+                if (match := _TASK_LINE_RE.fullmatch(line[1:]))
+            }
+            missing = sorted(removed_ids - added_ids)
+            if missing:
+                return (f"{rel}: patch removes or changes state task IDs {missing}. "
+                        "Keep each ID and edit only its checkbox/detail.")
+            for line in t["plus"]:
+                if line[1:].startswith("- [") and not _TASK_LINE_RE.fullmatch(line[1:]):
+                    return (f"{rel}: added state task line must use "
+                            "`- [ ] T-NNNN detail` or `- [x] T-NNNN detail`.")
             continue
         if kind in ("constitution", "overwrite_bounded") and (adds or dels):
             cap_key = "hard_max_lines" if kind == "constitution" else "max_lines"
@@ -947,6 +1030,23 @@ def _policy_violations(cwd: str,
             missing = [s for s in rule.get("required_sections", []) if s not in blob]
             if missing:
                 violations.append(f"{path}: missing sections {missing}.")
+        elif kind == "state":
+            try:
+                candidate = _git_bytes(cwd, "show", f":{path}").decode("utf-8")
+            except UnicodeDecodeError:
+                violations.append(f"{path}: state content must be valid UTF-8 text.")
+                continue
+            baseline: str | None = None
+            old_rule = _match_rule(old, policy) if old is not None else None
+            if (code in ("M", "T") or (code == "R" and old_rule is rule)):
+                try:
+                    baseline = _git_bytes(cwd, "show", f"HEAD:{old}").decode("utf-8")
+                except UnicodeDecodeError:
+                    violations.append(f"HEAD:{old}: state content must be valid UTF-8 text.")
+                    continue
+            reason = _state_reason(path, candidate, baseline)
+            if reason:
+                violations.append(reason)
     return violations
 
 

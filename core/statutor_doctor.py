@@ -135,7 +135,11 @@ def check(root: str) -> None:
 
     done_ids: set[str] = set()
     if os.path.isfile(p(tasks_filename)):
-        for line in open(p(tasks_filename), encoding="utf-8"):
+        state_body = open(p(tasks_filename), encoding="utf-8").read()
+        state_error = statutor_core._state_reason(tasks_filename, state_body)
+        if state_error:
+            errors.append(state_error)
+        for line in state_body.splitlines():
             m = re.match(r"- \[x\]\s+(\S+)", line, re.IGNORECASE)
             if m:
                 done_ids.add(m.group(1))

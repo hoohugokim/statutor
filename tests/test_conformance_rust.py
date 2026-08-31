@@ -63,6 +63,13 @@ EXPECTED = {
     "s50_unmanaged_claude_change_allowed": (0, ""),
     "s51_bootstrap_candidate_policy_judges_transaction": (1, "NOTES.md: append-only"),
     "s52_exact_tree_receipt_authorizes_policy_change": (0, ""),
+    "s53_state_checkbox_detail_reorder_add_allowed": (0, ""),
+    "s54_state_existing_id_removal_denied": (1, "T-0001"),
+    "s55_state_id_rewrite_denied": (1, "T-0001"),
+    "s56_state_duplicate_id_denied": (1, "duplicate state task ID T-0001"),
+    "s57_state_malformed_entry_denied": (1, "state line 1 must be"),
+    "s58_state_new_id_must_advance": (1, "greater than existing maximum T-0001"),
+    "s59_state_binary_denied": (1, "state content must be valid UTF-8"),
 }
 
 

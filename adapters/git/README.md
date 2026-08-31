@@ -11,6 +11,10 @@ committed policy and candidate index policy both judge the transaction;
 protected trust-root changes require an exact-tree local approval receipt.
 Malformed policy and Git query failures deny.
 
+`state` candidates must contain valid unique task IDs, retain every committed
+ID, and allocate new IDs above the committed maximum. Checkbox, detail, and
+ordering edits remain allowed.
+
 For servers without a Python runtime, `crates/statutor/` builds a static,
 conformance-gated twin binary (`statutor-staged`) with byte-identical
 verdicts — see its README and DECISIONS.md D-0014.

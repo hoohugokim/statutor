@@ -477,6 +477,52 @@ def test_overwrite_bounded_custom_rule_honored(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# state semantics (T-0027)
+# --------------------------------------------------------------------------
+
+def test_state_write_allows_checkbox_detail_and_reordering(tmp_path):
+    existing = "# TASKS\n\n- [ ] T-0001 first\n- [x] T-0002 second\n"
+    (tmp_path / "TASKS.md").write_text(existing, encoding="utf-8")
+    candidate = "# TASKS\n\n- [ ] T-0002 revised\n- [x] T-0001 done\n"
+    payload = {"file_path": "TASKS.md", "content": candidate}
+    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
+
+
+def test_state_write_denies_existing_id_removal_or_change(tmp_path):
+    (tmp_path / "TASKS.md").write_text(
+        "- [ ] T-0001 first\n- [ ] T-0002 second\n", encoding="utf-8")
+    payload = {"file_path": "TASKS.md", "content": "- [ ] T-0001 first\n"}
+    result = statutor_core.validate("write", payload, str(tmp_path), POLICY)
+    assert "cannot disappear or change: ['T-0002']" in result
+
+
+def test_state_write_denies_duplicate_and_malformed_entries(tmp_path):
+    (tmp_path / "TASKS.md").write_text("", encoding="utf-8")
+    duplicate = "- [ ] T-0001 first\n- [x] T-0001 again\n"
+    assert "duplicate state task ID T-0001" in statutor_core.validate(
+        "write", {"file_path": "TASKS.md", "content": duplicate}, str(tmp_path), POLICY)
+    malformed = "- [maybe] T-0001 first\n"
+    assert "state line 1 must be" in statutor_core.validate(
+        "write", {"file_path": "TASKS.md", "content": malformed}, str(tmp_path), POLICY)
+
+
+def test_state_write_new_ids_must_advance_committed_maximum(tmp_path):
+    (tmp_path / "TASKS.md").write_text("- [ ] T-0010 ten\n", encoding="utf-8")
+    candidate = "- [ ] T-0010 ten\n- [ ] T-0009 late reuse\n"
+    result = statutor_core.validate(
+        "write", {"file_path": "TASKS.md", "content": candidate}, str(tmp_path), POLICY)
+    assert "T-0009 must be greater than existing maximum T-0010" in result
+
+
+def test_state_edit_rechecks_complete_result(tmp_path):
+    (tmp_path / "TASKS.md").write_text("- [ ] T-0001 first\n", encoding="utf-8")
+    allowed = {"file_path": "TASKS.md", "old_string": "[ ]", "new_string": "[x]"}
+    assert statutor_core.validate("edit", allowed, str(tmp_path), POLICY) is None
+    denied = {"file_path": "TASKS.md", "old_string": "T-0001", "new_string": "T-0002"}
+    assert "T-0001" in statutor_core.validate("edit", denied, str(tmp_path), POLICY)
+
+
+# --------------------------------------------------------------------------
 # append_only / edit (K-43..K-49)
 # --------------------------------------------------------------------------
 
@@ -601,7 +647,7 @@ def test_frozen_read_ok(tmp_path):
 
 @pytest.mark.parametrize("name,expect_denied", [
     ("AGENTS.md", True), ("HANDOFF.md", True), ("DECISIONS.md", True),
-    ("TASKS.md", False), ("plans/archive/x.md", False),
+    ("TASKS.md", True), ("plans/archive/x.md", False),
 ])
 def test_bash_guard_name_set_derivation(name, expect_denied):
     result = statutor_core.guard_bash(f"tee {name}", POLICY)
@@ -627,8 +673,8 @@ def test_bash_guard_strict_colocation_denied_even_devnull():
     assert statutor_core.guard_bash("grep -c x DECISIONS.md > /dev/null", POLICY) is not None
 
 
-def test_bash_guard_state_policy_gap_quirk():
-    assert statutor_core.guard_bash("grep -c x TASKS.md > /dev/null", POLICY) is None
+def test_bash_guard_state_policy_is_protected():
+    assert statutor_core.guard_bash("grep -c x TASKS.md > /dev/null", POLICY) is not None
 
 
 def test_bash_guard_archive_glob_gap_quirk():
@@ -764,10 +810,28 @@ def test_apply_patch_delete_governed_denied(tmp_path, path, policy_name):
     assert "superseded, never removed" in result
 
 
-def test_apply_patch_delete_state_file_passes_quirk(tmp_path):
-    """State-plane files stay deletable everywhere (bash guard and staged
-    floor share this gap by design); apply_patch matches them, not stricter."""
-    assert ap(tmp_path, "*** Delete File: TASKS.md") is None
+def test_apply_patch_delete_state_file_denied(tmp_path):
+    result = ap(tmp_path, "*** Delete File: TASKS.md")
+    assert "governed (state)" in result
+
+
+def test_apply_patch_state_checkbox_and_detail_edit_allowed(tmp_path):
+    result = ap(tmp_path,
+                "*** Update File: TASKS.md\n@@\n-- [ ] T-0001 old\n+- [x] T-0001 revised")
+    assert result is None
+
+
+def test_apply_patch_state_id_change_or_removal_denied(tmp_path):
+    changed = ap(tmp_path,
+                 "*** Update File: TASKS.md\n@@\n-- [ ] T-0001 old\n+- [ ] T-0002 old")
+    assert "removes or changes state task IDs ['T-0001']" in changed
+    removed = ap(tmp_path, "*** Update File: TASKS.md\n@@\n-- [ ] T-0001 old")
+    assert "T-0001" in removed
+
+
+def test_apply_patch_state_malformed_addition_denied(tmp_path):
+    result = ap(tmp_path, "*** Update File: TASKS.md\n@@\n+- [maybe] T-0002 nope")
+    assert "added state task line must use" in result
 
 
 @pytest.mark.parametrize("section", [
@@ -1336,12 +1400,39 @@ def test_staged_constitution_rule_without_max_lines_falls_back_to_200(tmp_path, 
 
 
 @git_required
-def test_staged_tasks_deletion_unchecked_gap_quirk(ledger_repo, capsys):
+def test_staged_tasks_existing_id_removal_denied(ledger_repo, capsys):
     (ledger_repo / "TASKS.md").write_text("- [ ] T-0001 one\n", encoding="utf-8")
     git(ledger_repo, "add", "TASKS.md")
     code = statutor_core.run_staged(str(ledger_repo))
-    assert code == 0
+    assert code == 1
+    assert "T-0002" in capsys.readouterr().out
+
+
+@git_required
+def test_staged_tasks_checkbox_detail_reorder_and_advancing_add_allowed(
+        ledger_repo, capsys):
+    (ledger_repo / "TASKS.md").write_text(
+        "- [x] T-0002 revised second\n- [ ] T-0001 revised first\n"
+        "- [ ] T-0003 new third\n", encoding="utf-8")
+    git(ledger_repo, "add", "TASKS.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 0
     assert capsys.readouterr().out == ""
+
+
+@git_required
+@pytest.mark.parametrize("body,fragment", [
+    ("- [ ] T-0001 one\n- [ ] T-0002 two\n- [ ] T-0002 duplicate\n",
+     "duplicate state task ID T-0002"),
+    ("- [ ] T-0001 one\n- [ ] T-0002 two\n- [maybe] T-0003 bad\n",
+     "state line 3 must be"),
+    ("- [ ] T-0001 one\n- [ ] T-0002 two\n- [ ] T-0000 reused\n",
+     "T-0000 must be greater than existing maximum T-0002"),
+])
+def test_staged_tasks_invalid_candidate_denied(ledger_repo, capsys, body, fragment):
+    (ledger_repo / "TASKS.md").write_text(body, encoding="utf-8")
+    git(ledger_repo, "add", "TASKS.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    assert fragment in capsys.readouterr().out
 
 
 @git_required

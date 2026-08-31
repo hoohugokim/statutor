@@ -21,6 +21,8 @@ Enforced on staged changes only:
 
 * governed constitution/state/log records: deletion and rename outside their
   matching policy rule denied
+* `state` task entries: valid unique IDs, committed-ID retention, and monotonic
+  new allocation; checkbox, detail, and ordering edits allowed
 * `frozen` paths (`plans/archive/*`): tamper, deletion, and direct addition
   denied; renames INTO the archive allowed, departures denied
 * `append_only` files: every HEAD line must survive byte-for-byte and in order

@@ -3,6 +3,9 @@
 1. `pipx install statutor` — the adapter shells out to the Python kernel CLI;
    without it the plugin is a no-op. From a source checkout, the developer
    equivalent is `python -m pip install -e .` at the repository root.
+   The adapter calls `statutor check --if-ledger`: it stays silent unless the
+   nearest ancestor has `.statutor.yaml`, so a user-level installation does
+   not impose Statutor's defaults on unrelated repositories.
 2. Install the adapter itself:
 
    ```jsonc

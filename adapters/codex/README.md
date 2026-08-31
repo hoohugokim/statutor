@@ -59,6 +59,10 @@ hooks.json in the same layer):
 kernel parses apply_patch envelopes, so `"^(Bash|apply_patch)$"` gives real
 in-loop file-mutation coverage; tools outside both patterns
 (e.g. MCP ids) still never reach statutor — the git floor covers them.
+`statutor hook` first resolves the nearest `.statutor.yaml` marker and stays
+silent outside an opted-in ledger. This makes a user-level hook registration
+safe across unrelated repositories. Inside a ledger, policy comes from HEAD;
+an uncommitted initial marker uses embedded defaults for bootstrap.
 
 Doctrine ports for free: Codex reads AGENTS.md natively (32 KiB default
 combined project-instruction cap — another reason the constitution stays

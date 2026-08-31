@@ -16,7 +16,7 @@ export const Statutor: Plugin = async ({ $, directory }) => ({
     const tool = (input?.tool ?? "").toLowerCase()
     if (!["write", "edit", "bash", "apply_patch"].includes(tool)) return
     const args = JSON.stringify(output?.args ?? {})
-    const r = await $`statutor check ${tool} ${args} ${directory}`.quiet().nothrow()
+    const r = await $`statutor check --if-ledger ${tool} ${args} ${directory}`.quiet().nothrow()
     if (r.exitCode === 2) throw new Error(r.stderr.toString() || "[statutor] blocked by ledger policy")
   },
 })

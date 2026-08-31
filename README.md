@@ -15,7 +15,11 @@ and exactly one writer, enforced by hooks and git, not by prose.
 
 Plus a **bash guard** on every harness: shell writes to governed files
 (`>>`, `sed -i`, `tee`, ...) are denied — the editor tools are the audited
-path. No hand-maintained CHANGELOG.md: git log + conventional commits.
+path. Automatic adapters stay silent outside a repository explicitly marked
+by `.statutor.yaml`. A complete quoted heredoc used as `git commit -F -`
+message data is not scanned as shell code; its opener and all actual command
+lines remain guarded. No hand-maintained CHANGELOG.md: git log + conventional
+commits.
 
 State task identities are durable: an existing ID cannot disappear or be
 renamed, while its checkbox, detail, and position may change. New IDs advance
@@ -41,7 +45,7 @@ archive exists (D-0016).
 | Adapter | Mechanism | Coverage |
 |---|---|---|
 | Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash\|apply_patch` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
-| OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check` | in-loop (write/edit/bash)¹ |
+| OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check --if-ledger` | in-loop (write/edit/bash)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |
 | native (`crates/statutor/`) | `statutor-staged`, conformance-gated ≡ Python | local staged floor without Python |
@@ -84,6 +88,9 @@ HEAD snapshot; the git floor judges the transaction under both HEAD and the
 candidate index snapshot, so an unstaged or co-staged weakening cannot disable
 existing rules. The format is a strict, zero-dependency YAML subset shared by
 Python and Rust; malformed or unsupported committed/candidate policy denies.
+Before the marker's first commit, automatic hooks use embedded defaults. An
+edited worktree policy does not change hook behavior until it passes trust
+approval and becomes HEAD in a separate commit.
 
 After bootstrap, changing `.statutor.yaml` or Statutor's exact
 `CLAUDE.md` → `@AGENTS.md` bridge requires an exact-tree Git-local receipt:

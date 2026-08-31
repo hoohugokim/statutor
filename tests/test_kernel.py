@@ -121,6 +121,12 @@ def run_kernel(args: list[str], cwd: str | None = None,
                           input=input_str, capture_output=True, text=True)
 
 
+def mark_ledger(root: Path) -> None:
+    """Create the explicit worktree marker; pre-commit hooks use defaults."""
+    (root / ".statutor.yaml").write_text(
+        statutor_core.TEMPLATES[".statutor.yaml"], encoding="utf-8")
+
+
 def git(cwd, *args, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-c", "user.email=statutor@test", "-c", "user.name=statutor test",
                             "-c", "commit.gpgsign=false", *args], cwd=str(cwd), env=GIT_ENV,
@@ -706,6 +712,32 @@ def test_bash_guard_quoted_redirect_char_denied_quirk():
     assert result is not None
 
 
+def test_bash_guard_ignores_complete_quoted_git_commit_message_heredoc():
+    command = (
+        "git add clawd/HANDOFF.md && git commit -F - <<'MESSAGE'\n"
+        "Document AGENTS.md, DECISIONS.md, TASKS.md, cp, and `(<n>k)` in prose.\n"
+        "MESSAGE")
+    assert statutor_core.guard_bash(command, POLICY) is None
+
+
+def test_bash_guard_scans_real_mutation_before_commit_message_heredoc():
+    command = (
+        "rm HANDOFF.md && git commit -F - <<'MESSAGE'\n"
+        "benign prose\nMESSAGE")
+    assert statutor_core.guard_bash(command, POLICY) is not None
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -F - <<MESSAGE\nrm HANDOFF.md\nMESSAGE",
+    "bash <<'MESSAGE'\nrm HANDOFF.md\nMESSAGE",
+    "git commit -F - <<'MESSAGE'\nrm HANDOFF.md",
+    "git commit -F - <<'MESSAGE'\nbenign\nMESSAGE\nrm HANDOFF.md",
+    "printf x | git commit -F - <<'MESSAGE'\nrm HANDOFF.md\nMESSAGE",
+])
+def test_bash_guard_keeps_ambiguous_heredocs_strict(command):
+    assert statutor_core.guard_bash(command, POLICY) is not None
+
+
 @pytest.mark.parametrize("command", [
     "tee DECISIONS.md", "rm DECISIONS.md", "mv HANDOFF.md x", "cp AGENTS.md /tmp/x",
     "dd if=/dev/zero of=DECISIONS.md", "truncate -s0 DECISIONS.md", 'sed -i "" AGENTS.md',
@@ -949,6 +981,7 @@ def test_check_mode_applies_apply_patch_policy(tmp_path):
 
 
 def test_hook_mode_deny_json_for_apply_patch(tmp_path):
+    mark_ledger(tmp_path)
     event = {"tool_name": "apply_patch", "tool_input": envelope("*** Delete File: DECISIONS.md"),
              "cwd": str(tmp_path)}
     result = run_kernel(["hook"], input_str=json.dumps(event))
@@ -970,12 +1003,25 @@ def _hook_deny_json(result: subprocess.CompletedProcess) -> dict:
 
 
 def test_hook_denies_over_cap_write(tmp_path):
+    mark_ledger(tmp_path)
     event = {"tool_name": "Write",
              "tool_input": {"file_path": str(tmp_path / "AGENTS.md"), "content": lines(201)},
              "cwd": str(tmp_path)}
     result = run_kernel(["hook"], input_str=json.dumps(event))
     assert result.returncode == 0
-    _hook_deny_json(result)
+    data = _hook_deny_json(result)
+    assert "embedded defaults" in data["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_hook_silent_outside_unmarked_ledger(tmp_path):
+    event = {"tool_name": "Write",
+             "tool_input": {"file_path": str(tmp_path / "clawd/HANDOFF.md"),
+                            "content": lines(192)},
+             "cwd": str(tmp_path)}
+    result = run_kernel(["hook"], input_str=json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 def test_hook_benign_event_silent(tmp_path):
@@ -1021,6 +1067,8 @@ def test_hook_honors_event_cwd_over_process_cwd(tmp_path):
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     project = tmp_path / "project"
+    project.mkdir()
+    mark_ledger(project)
     (project / "plans" / "archive").mkdir(parents=True)
     target = project / "plans" / "archive" / "x.md"
     target.write_text("frozen\n", encoding="utf-8")
@@ -1033,6 +1081,7 @@ def test_hook_honors_event_cwd_over_process_cwd(tmp_path):
 
 
 def test_hook_no_cwd_key_defaults_to_process_cwd_and_normalizes_camelcase(tmp_path):
+    mark_ledger(tmp_path)
     (tmp_path / "DECISIONS.md").write_text("existing\n", encoding="utf-8")
     event = {"tool_name": "Edit",
              "tool_input": {"filePath": str(tmp_path / "DECISIONS.md"),
@@ -1044,6 +1093,7 @@ def test_hook_no_cwd_key_defaults_to_process_cwd_and_normalizes_camelcase(tmp_pa
 
 @pytest.mark.parametrize("args", [["hook"], ["--claude-hook"], []])
 def test_hook_mode_aliasing(tmp_path, args):
+    mark_ledger(tmp_path)
     event = {"tool_name": "Bash", "tool_input": {"command": "echo x >> DECISIONS.md"},
               "cwd": str(tmp_path)}
     result = run_kernel(args, input_str=json.dumps(event))
@@ -1053,6 +1103,7 @@ def test_hook_mode_aliasing(tmp_path, args):
 
 
 def test_hook_fail_open_covers_kernel_bug(tmp_path):
+    mark_ledger(tmp_path)
     directory = tmp_path / "DECISIONS.md"
     directory.mkdir()
     event = {"tool_name": "Write", "tool_input": {"file_path": str(directory), "content": "x"},
@@ -1094,7 +1145,71 @@ def test_check_camelcase_payload_denied(tmp_path):
 def test_check_usage_errors(args):
     result = run_kernel(args)
     assert result.returncode == 64
-    assert "usage: statutor check TOOL JSON [CWD]" in result.stderr
+    assert "usage: statutor check [--if-ledger] TOOL JSON [CWD]" in result.stderr
+
+
+def test_check_if_ledger_silent_outside_marker(tmp_path):
+    payload = json.dumps({"file_path": str(tmp_path / "clawd/HANDOFF.md"),
+                          "content": lines(192)})
+    result = run_kernel(
+        ["check", "--if-ledger", "Write", payload, str(tmp_path)])
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_check_if_ledger_resolves_relative_path_from_nested_cwd(tmp_path):
+    mark_ledger(tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    archive = tmp_path / "plans" / "archive"
+    archive.mkdir(parents=True)
+    target = archive / "x.md"
+    target.write_text("frozen\n", encoding="utf-8")
+    payload = json.dumps({"file_path": "../plans/archive/x.md",
+                          "content": "changed\n"})
+    result = run_kernel(
+        ["check", "--if-ledger", "Write", payload, str(nested)])
+    assert result.returncode == 2
+    assert "plans/archive/x.md is frozen" in result.stderr
+    assert "embedded defaults" in result.stderr
+
+
+def test_check_if_ledger_resolves_nested_apply_patch_against_root(tmp_path):
+    mark_ledger(tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    payload = json.dumps(envelope("*** Delete File: ../DECISIONS.md"))
+    result = run_kernel(
+        ["check", "--if-ledger", "apply_patch", payload, str(nested)])
+    assert result.returncode == 2
+    assert "DECISIONS.md is governed (append_only)" in result.stderr
+
+
+@git_required
+def test_check_if_ledger_committed_empty_policy_allows_nested_manual(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".statutor.yaml").write_text(
+        "bash_guard: true\ngoverned: []\n", encoding="utf-8")
+    commit_all(tmp_path)
+    payload = json.dumps({"file_path": str(tmp_path / "clawd/HANDOFF.md"),
+                          "content": lines(192)})
+    result = run_kernel(
+        ["check", "--if-ledger", "Write", payload, str(tmp_path)])
+    assert result.returncode == 0
+
+
+@git_required
+def test_check_denial_names_committed_policy_authority(ledger_repo):
+    mark_ledger(ledger_repo)
+    commit_all(ledger_repo, "mark ledger")
+    payload = json.dumps({"file_path": str(ledger_repo / "AGENTS.md"),
+                          "content": lines(201)})
+    result = run_kernel(
+        ["check", "--if-ledger", "Write", payload, str(ledger_repo)])
+    assert result.returncode == 2
+    assert "Active in-loop policy comes from HEAD:.statutor.yaml" in result.stderr
+    assert "approve and commit policy changes separately" in result.stderr
 
 
 def test_check_cwd_defaults_to_process_cwd(tmp_path):

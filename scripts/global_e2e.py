@@ -31,7 +31,7 @@ import statutor_skills as skills  # noqa: E402
 
 
 EXPECTED_VERSIONS = {
-    "claude": "2.1.251",
+    "claude": "2.1.252",
     "codex": "0.151.0",
     "opencode": "1.18.20",
 }
@@ -220,7 +220,7 @@ def _claude_probe(
         "skill_name_mentions": mentions,
         "offline_discovery_surface": False,
         "note": (
-            "Claude 2.1.251 exposes no offline model-context/skill inventory; "
+            "Claude 2.1.252 exposes no offline model-context/skill inventory; "
             "plugin list does not enumerate personal skills"),
         "instruction_contract": "native CLAUDE.md projection verified on disk",
     }

@@ -17,7 +17,7 @@ import statutor_skills as skill_lifecycle
 CODEX_DEFAULT_INSTRUCTION_BYTES = 32 * 1024
 SKILL_DESCRIPTION_BUDGET_BYTES = 32 * 1024
 CONTRACT_BASELINES = {
-    "claude": "2.1.251",
+    "claude": "2.1.252",
     "codex": "0.151.0",
     "opencode": "1.18.20",
 }

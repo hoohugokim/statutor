@@ -59,5 +59,16 @@ def test_codex_and_shared_hook_match_apply_patch() -> None:
     assert matcher == "^(Write|Edit|Bash|apply_patch)$"
 
 
+def test_automatic_adapters_are_explicit_ledger_only() -> None:
+    root = _read("README.md")
+    codex = _read("adapters/codex/README.md")
+    opencode_doc = _read("adapters/opencode/README.md")
+    opencode_source = _read("adapters/opencode/statutor.ts")
+    assert "stay silent outside a repository explicitly marked" in root
+    assert "nearest `.statutor.yaml` marker" in codex
+    assert "statutor check --if-ledger" in opencode_doc
+    assert "statutor check --if-ledger" in opencode_source
+
+
 def test_ci_no_longer_installs_unused_pyyaml() -> None:
     assert "pyyaml" not in _read(".github/workflows/ci.yml").lower()

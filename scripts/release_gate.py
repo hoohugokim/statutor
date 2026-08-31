@@ -218,6 +218,7 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
     _run([
         str(statutor),
         "check",
+        "--if-ledger",
         "write",
         json.dumps({
             "file_path": str(ledger / "plans" / "archive" / "denied.md"),
@@ -225,6 +226,19 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
         }),
         str(ledger),
     ], env=smoke_env, expected=2)
+    unmarked = scratch / "unmarked"
+    unmarked.mkdir()
+    _run([
+        str(statutor),
+        "check",
+        "--if-ledger",
+        "write",
+        json.dumps({
+            "file_path": str(unmarked / "clawd" / "HANDOFF.md"),
+            "content": "unrelated operator manual\n" * 192,
+        }),
+        str(unmarked),
+    ], env=smoke_env)
 
     global_home = scratch / "global-home"
     global_config = scratch / "global-config"

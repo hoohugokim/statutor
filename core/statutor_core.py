@@ -8,6 +8,8 @@ Entry modes (all share the same validate() core):
 
   statutor hook           Claude Code / Codex CLI hook protocol:
                           stdin JSON in, permissionDecision JSON out.
+                          Silent unless the nearest ancestor carries the
+                          explicit `.statutor.yaml` ledger marker.
                           (Codex's PreToolUse mirrors Claude's schema and
                           also fires for apply_patch, sending edits as
                           tool_input {"command": "<apply_patch envelope>"}.
@@ -18,6 +20,9 @@ Entry modes (all share the same validate() core):
   statutor check TOOL JSON [CWD]
                           Generic shim mode for OpenCode / custom harnesses / tests.
                           exit 0 = allow, exit 2 = deny (reason on stderr).
+  statutor check --if-ledger TOOL JSON [CWD]
+                          Automatic-adapter form: resolve the nearest marked
+                          ledger, or stay silent when none exists.
   statutor staged [CWD]   Git floor: validate staged changes (pre-commit).
                           exit 1 on violations.
   statutor init [DIR]     Scaffold governed files from embedded templates.
@@ -328,16 +333,21 @@ def _norm(payload: dict) -> dict:
     return out
 
 
-def _resolve_tool_path(file_path: str, cwd: str) -> tuple[str, str]:
-    """Return `(absolute, policy-relative)` using the event/check CWD.
+def _resolve_tool_path(
+    file_path: str, cwd: str, policy_root: str | None = None,
+) -> tuple[str, str]:
+    """Return `(absolute, policy-relative)` using event and ledger roots.
 
     Harnesses commonly send relative paths.  Resolving those against the
     kernel process CWD makes an explicit hook/check CWD ineffective and can
-    select the wrong policy rule entirely.
+    select the wrong policy rule entirely. Automatic adapters may run below a
+    marked ledger root: the event CWD still resolves relative tool arguments,
+    while `policy_root` makes matching relative to the ledger constitution.
     """
     absolute = file_path if os.path.isabs(file_path) else os.path.join(cwd, file_path)
     absolute = os.path.abspath(absolute)
-    return absolute, os.path.relpath(absolute, os.path.abspath(cwd))
+    root = os.path.abspath(policy_root or cwd)
+    return absolute, os.path.relpath(absolute, root)
 
 
 def _physical_line_count(content: str | bytes) -> int:
@@ -394,22 +404,26 @@ def _state_reason(path: str, candidate: str, baseline: str | None = None) -> str
 # core validation (pure): returns denial reason or None
 # --------------------------------------------------------------------------
 
-def validate(tool: str, payload: dict, cwd: str, policy: dict | None = None) -> str | None:
-    policy = policy or load_policy(cwd)
+def validate(
+    tool: str, payload: dict, cwd: str, policy: dict | None = None,
+    policy_root: str | None = None,
+) -> str | None:
+    root = os.path.abspath(policy_root or cwd)
+    policy = policy or load_policy(root)
     tool = tool.lower()
     payload = _norm(payload)
 
     if tool == "bash":
         return guard_bash(payload.get("command", ""), policy)
     if tool == "apply_patch":
-        return guard_apply_patch(payload, cwd, policy)
+        return guard_apply_patch(payload, cwd, policy, root)
     if tool not in ("write", "edit"):
         return None
 
     file_path = payload.get("file_path", "")
     if not file_path:
         return None
-    absolute_path, rel = _resolve_tool_path(file_path, cwd)
+    absolute_path, rel = _resolve_tool_path(file_path, cwd, root)
     rule = _match_rule(rel, policy)
     if rule is None:
         return None
@@ -477,6 +491,63 @@ def validate(tool: str, payload: dict, cwd: str, policy: dict | None = None) -> 
     return None
 
 
+_QUOTED_HEREDOC_RE = re.compile(
+    r"(?P<operator><<-?)\s*(?P<quote>['\"])(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=quote)\s*$")
+_GIT_COMMIT_STDIN_FILE_RE = re.compile(
+    r"(?:^|\s)(?:-F\s+-|--file(?:=|\s+)-)(?:\s|$)")
+
+
+def _bash_command_surface(command: str) -> str:
+    """Remove only complete, quoted `git commit -F -` heredoc data bodies.
+
+    This is deliberately not a shell parser. The recognized heredoc belongs
+    to an unpiped simple `git commit` command; its opener stays visible, as do
+    commands before it and after its terminator. Everything ambiguous remains
+    byte-for-byte in the strict scanner's input.
+    """
+    lines = command.splitlines()
+    visible: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = _QUOTED_HEREDOC_RE.search(line)
+        if match is None:
+            visible.append(line)
+            i += 1
+            continue
+
+        owner = line[:match.start()]
+        controls = list(re.finditer(r"&&|\|\||[;|]", owner))
+        if controls and "|" in controls[-1].group(0):
+            visible.append(line)
+            i += 1
+            continue
+        segment = owner[controls[-1].end():] if controls else owner
+        segment = segment.strip()
+        if (re.fullmatch(r"git\s+commit\b.*", segment) is None
+                or _GIT_COMMIT_STDIN_FILE_RE.search(segment) is None):
+            visible.append(line)
+            i += 1
+            continue
+
+        delimiter = match.group("delimiter")
+        strip_tabs = match.group("operator") == "<<-"
+        end = i + 1
+        while end < len(lines):
+            candidate = lines[end].lstrip("\t") if strip_tabs else lines[end]
+            if candidate == delimiter:
+                break
+            end += 1
+        if end == len(lines):
+            visible.append(line)  # incomplete input: preserve and scan it all
+            i += 1
+            continue
+        visible.append(line)
+        i = end + 1
+    return "\n".join(visible)
+
+
 def guard_bash(command: str, policy: dict) -> str | None:
     """Deny shell commands that look like writes to governed files.
 
@@ -488,11 +559,12 @@ def guard_bash(command: str, policy: dict) -> str | None:
     """
     if not policy.get("bash_guard", True) or not command:
         return None
+    surface = _bash_command_surface(command)
     names = [os.path.basename(r.get("pattern", "")) for r in policy.get("governed", [])
              if r.get("policy") in ("append_only", "overwrite_bounded", "constitution", "state")
              and "*" not in r.get("pattern", "")]
-    hit = [n for n in names if n and n in command]
-    if hit and any(re.search(p, command) for p in WRITEISH):
+    hit = [n for n in names if n and n in surface]
+    if hit and any(re.search(p, surface) for p in WRITEISH):
         return (f"shell write touching governed file(s) {hit} denied: direct shell "
                 "mutations bypass policy validation. Use the editor tool, or set "
                 "bash_guard: false in .statutor.yaml if this was a false positive.")
@@ -548,10 +620,11 @@ def _patch_targets(text: str) -> list[dict]:
     return targets
 
 
-def _resolve_patch_path(path: str, cwd: str) -> str:
-    """Policy-relative form of a patch path (same resolution write/edit get:
-    absolute-ize against cwd, then relativize back)."""
-    return os.path.relpath(os.path.abspath(os.path.join(cwd, path)), os.path.abspath(cwd))
+def _resolve_patch_path(
+    path: str, cwd: str, policy_root: str | None = None,
+) -> tuple[str, str]:
+    """Absolute and policy-relative forms of an apply_patch path."""
+    return _resolve_tool_path(path, cwd, policy_root)
 
 
 def _size_reason(rel: str, kind: str, rule: dict, content: str) -> str | None:
@@ -574,7 +647,9 @@ def _size_reason(rel: str, kind: str, rule: dict, content: str) -> str | None:
     return None
 
 
-def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
+def guard_apply_patch(
+    payload: dict, cwd: str, policy: dict, policy_root: str | None = None,
+) -> str | None:
     """Policy-check an apply_patch envelope.
 
     Codex PreToolUse delivers edits as tool_name apply_patch with
@@ -602,7 +677,7 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
         return None
 
     for t in _patch_targets(text):
-        rel = _resolve_patch_path(t["path"], cwd)
+        absolute_path, rel = _resolve_patch_path(t["path"], cwd, policy_root)
         rule = _match_rule(rel, policy)
         kind = rule.get("policy", "") if rule else ""
 
@@ -614,7 +689,8 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
                         "Records are superseded, never removed.")
             continue
 
-        move_rel = _resolve_patch_path(t["move_to"], cwd) if t["move_to"] else None
+        move_rel = (_resolve_patch_path(t["move_to"], cwd, policy_root)[1]
+                    if t["move_to"] else None)
         if move_rel is not None and kind == "frozen":
             return (f"{rel} is frozen (archived plan). Moving a record OUT of "
                     "the archive is denied.")
@@ -672,7 +748,7 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
             cap = int(rule.get(cap_key, 200))
             try:
                 cur_n = _physical_line_count(
-                    open(os.path.join(cwd, rel), encoding="utf-8").read())
+                    open(absolute_path, encoding="utf-8").read())
             except OSError:
                 cur_n = None  # unreadable/unmapped path: let the floor judge
             if cur_n is not None and cur_n + adds - dels > cap:
@@ -685,13 +761,36 @@ def guard_apply_patch(payload: dict, cwd: str, policy: dict) -> str | None:
 # entry: hook (Claude Code / Codex protocol) — must fail open
 # --------------------------------------------------------------------------
 
+def _policy_authority_note(root: str) -> str:
+    """Explain the active in-loop policy source without guessing at state."""
+    if _head_policy_blob(root) is None:
+        if os.path.isfile(os.path.join(root, ".statutor.yaml")):
+            return ("Active in-loop policy uses embedded defaults until the marked "
+                    ".statutor.yaml is committed.")
+        return ("Active explicit-check policy uses embedded defaults because "
+                "HEAD:.statutor.yaml is absent.")
+    return ("Active in-loop policy comes from HEAD:.statutor.yaml; approve and "
+            "commit policy changes separately before retrying.")
+
+
+def _automatic_reason(tool: str, payload: dict, cwd: str) -> str | None:
+    """Validate one automatic adapter event only inside an opted-in ledger."""
+    root = find_ledger_root(cwd)
+    if root is None:
+        return None
+    reason = validate(
+        tool, payload, cwd, policy=load_policy(root), policy_root=root)
+    if reason:
+        return f"{reason} {_policy_authority_note(root)}"
+    return None
+
 def run_hook() -> int:
     try:
         event = json.load(sys.stdin)
         tool = event.get("tool_name", "")
         payload = event.get("tool_input", {}) or {}
         cwd = event.get("cwd", os.getcwd())
-        reason = validate(tool, payload, cwd)
+        reason = _automatic_reason(tool, payload, cwd)
         if reason:
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -708,13 +807,21 @@ def run_hook() -> int:
 # --------------------------------------------------------------------------
 
 def run_check(argv: list[str]) -> int:
+    if_ledger = bool(argv and argv[0] == "--if-ledger")
+    if if_ledger:
+        argv = argv[1:]
     if len(argv) < 2:
-        print("usage: statutor check TOOL JSON [CWD]", file=sys.stderr)
+        print("usage: statutor check [--if-ledger] TOOL JSON [CWD]", file=sys.stderr)
         return 64
     tool, payload = argv[0], json.loads(argv[1])
     cwd = argv[2] if len(argv) > 2 else os.getcwd()
     try:
-        reason = validate(tool, payload, cwd)
+        if if_ledger:
+            reason = _automatic_reason(tool, payload, cwd)
+        else:
+            reason = validate(tool, payload, cwd)
+            if reason:
+                reason = f"{reason} {_policy_authority_note(cwd)}"
     except _PolicyFailure as exc:
         print(f"[statutor] committed policy invalid: {exc}", file=sys.stderr)
         return 2

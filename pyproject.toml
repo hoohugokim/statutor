@@ -37,4 +37,4 @@ statutor-doctor = "statutor_doctor:main"
 
 [tool.setuptools]
 package-dir = { "" = "core" }
-py-modules = ["statutor_core", "statutor_doctor"]
+py-modules = ["statutor_core", "statutor_doctor", "statutor_global"]

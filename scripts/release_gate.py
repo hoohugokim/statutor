@@ -121,6 +121,7 @@ def _audit_sdist(path: Path, version: str) -> None:
         "core/statutor.egg-info/top_level.txt",
         "core/statutor_core.py",
         "core/statutor_doctor.py",
+        "core/statutor_global.py",
     }
     seen: set[str] = set()
     private_markers = (b"/Users/", b"/home/", b"C:\\Users\\")
@@ -153,6 +154,7 @@ def _audit_wheel(path: Path, version: str) -> None:
     expected = {
         "statutor_core.py",
         "statutor_doctor.py",
+        "statutor_global.py",
         f"{dist}/METADATA",
         f"{dist}/RECORD",
         f"{dist}/WHEEL",

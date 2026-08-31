@@ -47,3 +47,21 @@
    includes it and the kernel parses the `*** Begin Patch` envelope
    (frozen paths, Delete File of governed records, append-only deletions,
    and cap/sections on Add File).
+
+## Optional global user layer (v0.4)
+
+The global layer is separate from this npm enforcement adapter. It projects
+the common constitution plus an OpenCode overlay to
+`$XDG_CONFIG_HOME/opencode/AGENTS.md`. Skills are projected to the portable
+`$HOME/.agents/skills` and Claude personal roots that OpenCode already
+discovers; Statutor deliberately creates no third native OpenCode skill copy.
+`statutor global status` and `doctor` explain native-vs-Claude instruction
+fallback and classify duplicate skill trees as identical or divergent.
+
+Use `statutor global init`, review `statutor global plan --json`, then opt in
+with `statutor global apply --host opencode` and `statutor global skill apply`.
+The separate `python scripts/global_e2e.py --host opencode --json` probe was
+verified against local OpenCode 1.18.20. Under a temporary profile,
+`opencode debug skill --pure` resolved the deliberately duplicated fixture to
+one entry. The probe performs no model or network request and never points
+OpenCode at the caller's real home.

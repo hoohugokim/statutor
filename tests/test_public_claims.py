@@ -20,11 +20,21 @@ def test_install_snippets_use_real_repository_and_supported_pin() -> None:
     assert f"/plugin marketplace add {expected_repo}" in root
     assert f"repo: {expected_repo}" in root
     assert f"repo: {expected_repo}" in git_adapter
-    assert "rev: v0.3.1" in root
-    assert "rev: v0.3.1" in git_adapter
+    assert "rev: v0.4.0" in root
+    assert "rev: v0.4.0" in git_adapter
     for stale in ("<path-or-url>", "<this repo>", "<your statutor repo url>", "rev: v0.2.0"):
         assert stale not in root
         assert stale not in git_adapter
+
+
+def test_global_e2e_is_explicit_and_real_home_safe() -> None:
+    root = (ROOT / "README.md").read_text(encoding="utf-8")
+    script = (ROOT / "scripts/global_e2e.py").read_text(encoding="utf-8")
+    assert "python scripts/global_e2e.py --json" in root
+    assert "temporary profile" in root
+    assert "never mutates the caller's real home" in root
+    assert "never points a host at the caller's real home" in script
+    assert "never performs a\nmodel or network request" in script
 
 
 def test_staged_mode_is_not_advertised_as_server_or_static() -> None:

@@ -60,9 +60,27 @@ kernel parses apply_patch envelopes, so `"^(Bash|apply_patch)$"` gives real
 in-loop file-mutation coverage; tools outside both patterns
 (e.g. MCP ids) still never reach statutor — the git floor covers them.
 
-Doctrine ports for free: Codex reads AGENTS.md natively (32 KiB combined
-cap — another reason the constitution stays small; cap unverified in
-this pass — the docs URL moved from developers.openai.com/codex/* to
-learn.chatgpt.com/docs/*) and supports skills in the same
-SKILL.md-with-frontmatter format; reuse skills/statutor/SKILL.md.
+Doctrine ports for free: Codex reads AGENTS.md natively (32 KiB default
+combined project-instruction cap — another reason the constitution stays
+small) and supports skills in the same SKILL.md-with-frontmatter format;
+reuse skills/statutor/SKILL.md. See the current
+[AGENTS discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+and [skills](https://learn.chatgpt.com/docs/build-skills) contracts.
 Commands: mirror commands/*.md as Codex custom prompts.
+
+## Optional global user layer (v0.4)
+
+`statutor global` is separate from hooks and project ledgers. It projects a
+human-owned common constitution plus a Codex overlay to
+`$CODEX_HOME/AGENTS.md`, and portable skills to `$HOME/.agents/skills`.
+`plan`, `status`, and `doctor` report effective precedence, including a
+shadowing `AGENTS.override.md`, disabled skills, legacy roots, and the
+configured instruction cap. Statutor never edits `config.toml`, an override,
+admin/system/plugin content, or a foreign skill lock.
+
+Use `statutor global init`, review `statutor global plan --json`, and apply
+only the selected host with `statutor global apply --host codex`. The opt-in
+release probe `python scripts/global_e2e.py --host codex --json` was verified
+against local Codex CLI 0.151.0 using `codex debug prompt-input` under a
+temporary profile. It performs no model or network request and never points
+Codex at the caller's real home.

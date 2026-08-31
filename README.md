@@ -19,7 +19,7 @@ path. No hand-maintained CHANGELOG.md: git log + conventional commits.
 
 State task identities are durable: an existing ID cannot disappear or be
 renamed, while its checkbox, detail, and position may change. New IDs advance
-beyond the committed maximum. v0.3.1 intentionally has no pruning operation;
+beyond the committed maximum. v0.4 intentionally has no pruning operation;
 completed entries remain until a separately specified identity-preserving
 archive exists (D-0016).
 
@@ -76,7 +76,7 @@ mandatory there.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.3.1
+        rev: v0.4.0
         hooks: [{id: statutor}]
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
@@ -104,6 +104,13 @@ all package payloads, builds the Python sdist and wheel in scratch space,
 installs the wheel into an isolated target, and smoke-tests both console
 scripts. A tagged release additionally passes `--tag vX.Y.Z --dist-dir dist`;
 verified artifacts are copied only after every check succeeds.
+
+The v0.4 global layer also has a separate, opt-in current-host probe:
+`python scripts/global_e2e.py --json`. It pins the tested Claude, Codex, and
+OpenCode versions, rehomes every host under a temporary profile, performs no
+model or network request, and proves native discovery where an offline surface
+exists, modified-target refusal, and exact uninstall recovery. It is not part
+of the hermetic release gate and never mutates the caller's real home.
 
 ## Portable user layer (v0.4)
 

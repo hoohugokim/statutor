@@ -18,8 +18,8 @@ SPEC.loader.exec_module(release_gate)
 
 def test_release_versions_are_explicit_and_compatible() -> None:
     assert release_gate.versions(ROOT) == {
-        "python": "0.3.1",
-        "plugin": "0.3.1",
+        "python": "0.4.0",
+        "plugin": "0.4.0",
         "npm": "0.1.1",
         "cargo": "0.1.1",
     }
@@ -40,11 +40,11 @@ def test_python_and_plugin_versions_must_match(tmp_path: Path) -> None:
     data = json.loads(plugin.read_text(encoding="utf-8"))
     data["version"] = "9.9.9"
     plugin.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="Python 0.3.1 != Claude plugin 9.9.9"):
+    with pytest.raises(RuntimeError, match="Python 0.4.0 != Claude plugin 9.9.9"):
         release_gate.versions(tmp_path)
 
 
 def test_release_tag_must_match_python_version() -> None:
-    release_gate._check_tag("v0.3.1", "0.3.1")
-    with pytest.raises(RuntimeError, match="v0.3.0 != package version v0.3.1"):
-        release_gate._check_tag("v0.3.0", "0.3.1")
+    release_gate._check_tag("v0.4.0", "0.4.0")
+    with pytest.raises(RuntimeError, match="v0.3.0 != package version v0.4.0"):
+        release_gate._check_tag("v0.3.0", "0.4.0")

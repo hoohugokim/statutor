@@ -270,6 +270,43 @@ def test_missing_last_verified_stamp_errors(tmp_path, monkeypatch, capsys):
     assert "ERROR HANDOFF.md has no `last_verified: YYYY-MM-DD` stamp." in out
 
 
+def test_invalid_date_is_reported_without_hiding_other_drift(tmp_path, monkeypatch, capsys):
+    broken = _handoff_text("2026-02-31").replace("## Gotchas\nnone\n\n", "")
+    _write_ledger(tmp_path, overrides={"HANDOFF.md": broken}, omit={"TASKS.md"})
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 1
+    assert "invalid last_verified date 2026-02-31" in out
+    assert "missing governed file: TASKS.md" in out
+    assert "missing required sections: ## Gotchas" in out
+
+
+def test_future_last_verified_date_is_error(tmp_path, monkeypatch, capsys):
+    future = (date.today() + timedelta(days=10)).isoformat()
+    _write_ledger(tmp_path, overrides={"HANDOFF.md": _handoff_text(future)})
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 1
+    assert f"last_verified date {future} is in the future" in out
+
+
+def test_doctor_resolves_nearest_ledger_root_from_nested_directory(
+        tmp_path, monkeypatch, capsys):
+    _write_ledger(tmp_path)
+    _write_statutor_yaml(tmp_path, statutor_core.TEMPLATES[".statutor.yaml"])
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    out, code = run_doctor(monkeypatch, capsys, nested)
+    assert code == 0
+    assert "OK    ledger clean." in out
+
+
+def test_missing_file_guidance_uses_current_cli(tmp_path, monkeypatch, capsys):
+    _write_ledger(tmp_path, omit={"TASKS.md"})
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+    assert code == 1
+    assert "run `statutor init .`" in out
+    assert "/ledger-init" not in out
+
+
 def test_consumed_plan_left_in_plans_warns(tmp_path, monkeypatch, capsys):
     _write_ledger(tmp_path, overrides={"TASKS.md": "# TASKS\n\n- [x] T-0001 done task\n"})
     plans_dir = tmp_path / "plans"

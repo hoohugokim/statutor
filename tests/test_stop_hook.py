@@ -76,6 +76,27 @@ def test_silent_outside_ledger_when_cwd_key_absent(tmp_path, monkeypatch):
     assert result.stdout == ""
 
 
+def test_generic_agents_only_repo_does_not_opt_into_statutor(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# Generic project instructions\n", encoding="utf-8")
+    event = {"cwd": str(tmp_path), "stop_hook_active": False}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_nested_cwd_resolves_marked_ledger_root(tmp_path):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    nested = tmp_path / "src" / "deep"
+    nested.mkdir(parents=True)
+    event = {"cwd": str(nested), "stop_hook_active": False}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert "missing governed file: TASKS.md" in (
+        data["hookSpecificOutput"]["additionalContext"])
+
+
 # --------------------------------------------------------------------------
 # clean ledger / stale-sentinel scaffold: silent
 # --------------------------------------------------------------------------

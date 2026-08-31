@@ -8,10 +8,9 @@ core/statutor_doctor.py located relative to this file (not via console script:
 the plugin may be used without `pip install`).
 
 Silent + exit 0 on a clean ledger, AND silent + exit 0 outside a statutor
-ledger entirely (no AGENTS.md and no .statutor.yaml at the resolved project
-dir) — this plugin can be installed at user scope, so every non-statutor repo,
-and every session where Claude has cd'd into a subdirectory of one, must
-not pay a spurious continuation on every turn.
+ledger entirely. `.statutor.yaml` is the explicit marker; a generic AGENTS.md
+does not opt a repo in. Nested working directories resolve to the nearest
+marked ancestor.
 
 Fails open on anything unexpected (bad stdin, missing doctor script,
 doctor crash/timeout): a broken linter must never trap the user in the
@@ -62,9 +61,17 @@ def _state_filename(project_dir: str) -> str:
     return "HANDOFF.md"
 
 
-def _looks_like_ledger(project_dir: str) -> bool:
-    return os.path.isfile(os.path.join(project_dir, "AGENTS.md")) or \
-        os.path.isfile(os.path.join(project_dir, ".statutor.yaml"))
+def _find_ledger_root(start: str) -> str | None:
+    current = os.path.abspath(start)
+    if not os.path.isdir(current):
+        current = os.path.dirname(current)
+    while True:
+        if os.path.isfile(os.path.join(current, ".statutor.yaml")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
 
 
 def main() -> int:
@@ -78,9 +85,8 @@ def main() -> int:
     if event.get("stop_hook_active"):
         return 0  # already continued once this turn: surface once, then get out of the way
 
-    project_dir = event.get("cwd") or os.getcwd()
-
-    if not _looks_like_ledger(project_dir):
+    project_dir = _find_ledger_root(event.get("cwd") or os.getcwd())
+    if project_dir is None:
         return 0  # not a statutor ledger: stay completely out of the way
 
     try:

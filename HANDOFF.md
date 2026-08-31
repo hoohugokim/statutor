@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `full pytest 347/5; fresh cargo 7; conformance 61; package audit 3; doctor/fmt/diff clean`
+last_verified: 2026-08-31 by `full pytest 353/5; doctor suite 47; prior fresh cargo 7/conformance 61/package 3; diff clean`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -12,15 +12,16 @@ v0.3 shipped; the 2026-08-31 audit found lifecycle, trust, and claim blockers.
 T-0026 implements D-0015's dual-snapshot trust floor and exact-tree receipts.
 T-0027 implements D-0016 state identity: existing task IDs survive; checkbox,
 detail, and order may change; new IDs advance beyond the committed maximum.
-Shell/editor/apply_patch, doctor, and both floors enforce the contract. The
-floor carries 59 semantic scenarios; malformed policy/Git failures deny and
-hooks retain their outer fail-open boundary. Exact 0.1.1 audits remain green.
+T-0028 makes doctor/Stop aggregate invalid dates, resolve nested marked roots,
+and ignore generic AGENTS-only repos. Shell/editor/apply_patch, doctor, and both
+floors enforce the state contract. The floor carries 59 semantic scenarios;
+malformed policy/Git failures deny. Exact 0.1.1 audits remain green.
 
 ## Next action
-Execute T-0028: make doctor/Stop aggregate safely across invalid dates and
-policy drift, resolve nested roots, ignore generic AGENTS-only repos, and remove
-stale command text. Then perform T-0029's public truth sweep. Keep false
-pre-receive claims out of v0.3.1; real-home dogfood remains separately gated.
+Execute T-0029's public truth sweep: retract staged-as-pre-receive and static
+binary claims, correct matcher/pin/placeholders, and distinguish distribution
+channels from enforcement coverage. Then build T-0030's release gate. Real-home
+dogfood remains separately gated.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

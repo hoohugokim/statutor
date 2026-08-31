@@ -293,6 +293,20 @@ def load_worktree_policy(cwd: str) -> dict:
         return parse_policy(stream.read(), ".statutor.yaml")
 
 
+def find_ledger_root(start: str) -> str | None:
+    """Nearest ancestor carrying Statutor's explicit ledger marker."""
+    current = os.path.abspath(start)
+    if not os.path.isdir(current):
+        current = os.path.dirname(current)
+    while True:
+        if os.path.isfile(os.path.join(current, ".statutor.yaml")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 def _match_rule(rel_path: str, policy: dict) -> dict | None:
     rel_path = rel_path.replace(os.sep, "/")
     base = os.path.basename(rel_path)

@@ -102,7 +102,7 @@ def check(root: str) -> None:
 
     for name in check_names:
         if not os.path.isfile(p(name)):
-            errors.append(f"missing governed file: {name} (run /ledger-init)")
+            errors.append(f"missing governed file: {name} (run `statutor init .`)")
 
     if os.path.isfile(p(agents_filename)):
         n = sum(1 for _ in open(p(agents_filename), encoding="utf-8"))
@@ -118,8 +118,16 @@ def check(root: str) -> None:
         if not m:
             errors.append(f"{handoff_filename} has no `last_verified: YYYY-MM-DD` stamp.")
         else:
-            age = (date.today() - datetime.strptime(m.group(1), "%Y-%m-%d").date()).days
-            if age > handoff_stale_days:
+            stamp = m.group(1)
+            try:
+                verified = datetime.strptime(stamp, "%Y-%m-%d").date()
+            except ValueError:
+                errors.append(f"{handoff_filename} has invalid last_verified date {stamp}.")
+                verified = None
+            if verified is not None and verified > date.today():
+                errors.append(f"{handoff_filename} last_verified date {stamp} is in the future.")
+            elif verified is not None and (date.today() - verified).days > handoff_stale_days:
+                age = (date.today() - verified).days
                 warnings.append(
                     f"{handoff_filename} last verified {age} days ago — re-verify or rewrite."
                 )
@@ -170,7 +178,8 @@ def check(root: str) -> None:
 
 
 def main() -> None:
-    root = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
+    requested = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
+    root = statutor_core.find_ledger_root(requested) or os.path.abspath(requested)
     check(root)
     for w in warnings:
         print(f"WARN  {w}")

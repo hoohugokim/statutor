@@ -6,5 +6,6 @@ include core/statutor_core.py
 include core/statutor_doctor.py
 include core/statutor_global.py
 include core/statutor_global_cli.py
+include core/statutor_skills.py
 prune tests
 global-exclude __pycache__ *.py[cod]

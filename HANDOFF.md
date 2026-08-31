@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `pytest 400/5; global fake-root suites 40; compile/diff clean; prior release gate green`
+last_verified: 2026-08-31 by `release gate: pytest 416/3; Rust 7/0; wheel skill smoke; doctor/staged clean`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -16,14 +16,13 @@ portable user layer: human canonical sources, whole-file/tree projections,
 CAS receipts/backups, stable diagnostics, and fake-home-only implementation.
 T-0032 implements the resolver, strict JSON schemas, safe deterministic hashes,
 state lock/journals, durable file/tree CAS, and exact backup/restore primitives.
-T-0033 exposes deterministic instruction projections and init/plan/adopt/apply/
-status/uninstall with pre-displayed plans, byte-preserving adoption, receipts,
-rollback, modified-target refusal, and Claude/Codex/OpenCode precedence warnings.
+T-0033/34 expose reversible instruction and Agent Skill lifecycles: deterministic
+whole-file/tree projections, adoption, foreign-lock coexistence, duplicate
+classification, CAS refusal, receipts, journals, rollback, and packaged CLI.
 
 ## Next action
-Implement T-0034's Agent Skill import/status/plan/apply/sync/uninstall lifecycle:
-strict open-spec validation, safe source copies, portable + Claude projections,
-foreign-lock coexistence, duplicate classification, and CAS receipts.
+Implement T-0035's unified stable status/doctor inventory: precedence,
+shadowing, drift, unsafe skills, catalog budget, and legacy/native roots.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

@@ -123,6 +123,7 @@ def _audit_sdist(path: Path, version: str) -> None:
         "core/statutor_doctor.py",
         "core/statutor_global.py",
         "core/statutor_global_cli.py",
+        "core/statutor_skills.py",
     }
     seen: set[str] = set()
     private_markers = (b"/Users/", b"/home/", b"C:\\Users\\")
@@ -157,6 +158,7 @@ def _audit_wheel(path: Path, version: str) -> None:
         "statutor_doctor.py",
         "statutor_global.py",
         "statutor_global_cli.py",
+        "statutor_skills.py",
         f"{dist}/METADATA",
         f"{dist}/RECORD",
         f"{dist}/WHEEL",
@@ -246,6 +248,41 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
         raise RuntimeError("installed global CLI did not create Codex projection")
     if (global_home / ".claude" / "CLAUDE.md").exists():
         raise RuntimeError("host-scoped global apply touched unselected Claude target")
+
+    skill_source = scratch / "fixture-skill"
+    skill_source.mkdir()
+    (skill_source / "SKILL.md").write_text(
+        "---\nname: fixture-skill\ndescription: Release-gate fixture.\n"
+        "custom-field: preserved\n---\n\n# Fixture\n",
+        encoding="utf-8",
+    )
+    (skill_source / "reference.txt").write_text("v1\n", encoding="utf-8")
+    _run([
+        str(statutor), "global", "skill", "import", *roots,
+        str(skill_source), "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "skill", "plan", *roots, "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "skill", "apply", *roots, "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "skill", "status", *roots, "--json",
+    ], env=global_env)
+    portable = global_home / ".agents" / "skills" / "fixture-skill"
+    claude = global_home / ".claude" / "skills" / "fixture-skill"
+    native_opencode = (
+        global_home / ".config" / "opencode" / "skills" / "fixture-skill")
+    if not portable.is_dir() or not claude.is_dir():
+        raise RuntimeError("installed global CLI did not project fixture skill")
+    if native_opencode.exists():
+        raise RuntimeError("global skill apply created a third OpenCode copy")
+    _run([
+        str(statutor), "global", "skill", "uninstall", *roots, "--json",
+    ], env=global_env)
+    if portable.exists() or claude.exists():
+        raise RuntimeError("global skill uninstall did not restore absent targets")
 
 
 def _build_and_smoke(source: Path, workspace: Path, version: str) -> list[Path]:

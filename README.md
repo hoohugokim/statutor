@@ -30,7 +30,8 @@ archive exists (D-0016).
                           (fail-open hooks; staged floor fails closed)
     core/statutor_doctor.py   drift linter (stale stamps, budgets, unarchived plans)
     core/statutor_global.py   global-layer roots, schemas, hashes, CAS, backups
-    core/statutor_global_cli.py  opt-in instruction/skill projection lifecycle
+    core/statutor_global_cli.py  opt-in global instruction lifecycle and CLI
+    core/statutor_skills.py   portable Agent Skill validation and projections
     hooks/stop_doctor.py  Claude Code Stop hook: runs statutor-doctor after each
                           turn and surfaces its WARN/ERROR lines as
                           additionalContext — non-blocking, silent when the
@@ -119,12 +120,29 @@ regular file and imports its bytes verbatim into that host's canonical overlay.
     statutor global adopt claude
     statutor global uninstall --host codex
 
+    statutor global skill import ./my-skill
+    statutor global skill plan --json
+    statutor global skill apply
+    statutor global skill status --json
+    statutor global skill sync
+    statutor global skill uninstall
+
 Every mutation prints its resolved plan first. Existing unmanaged targets are
 conflicts, managed hand edits are never overwritten or removed, and uninstall
 restores the original backup. `--home`, `--config-root`, and `--state-root`
 provide explicit isolated roots for tests and alternate profiles. Codex
 overrides and OpenCode's Claude fallback are reported as precedence warnings;
 Statutor never rewrites them.
+
+Imported skills are copied to a new human-owned canonical source, then
+projected as complete trees to `$HOME/.agents/skills` and Claude's personal
+skills root. Core `SKILL.md` metadata and the complete tree are validated;
+host-specific frontmatter is preserved. Identical unmanaged trees require
+explicit `--adopt-identical`, differing or hand-edited trees are conflicts,
+and names in a foreign `.agents/.skill-lock.json` remain entirely foreign.
+OpenCode discovers the portable and Claude projections, so Statutor reports
+whether those duplicates are identical instead of creating a third native
+OpenCode copy.
 
 ## Provenance
 

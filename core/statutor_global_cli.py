@@ -659,6 +659,9 @@ def _root_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv and argv[0] == "skill":
+        import statutor_skills
+        return statutor_skills.main(argv[1:])
     parser = argparse.ArgumentParser(prog="statutor global")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for name in ("init", "plan", "apply", "status", "uninstall"):

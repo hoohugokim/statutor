@@ -7,7 +7,6 @@ importable whether or not the package is installed.
 from __future__ import annotations
 
 import sys
-import types
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -107,9 +106,8 @@ def _policy_stale_30() -> dict:
 
 
 def _stub_yaml(monkeypatch: pytest.MonkeyPatch, policy: dict) -> None:
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: policy
-    monkeypatch.setitem(sys.modules, "yaml", stub)
+    """Inject a parsed policy for tests focused on doctor derivation."""
+    monkeypatch.setattr(statutor_core, "load_worktree_policy", lambda root: policy)
 
 
 def _handoff_text(last_verified: str) -> str:
@@ -194,7 +192,6 @@ def test_agents_over_soft_budget_warns(tmp_path, monkeypatch, capsys):
 
 
 def test_custom_soft_max_lines_honored(tmp_path, monkeypatch, capsys):
-    pytest.importorskip("yaml")
     over_custom_agents = "# AGENTS\n" + "line\n" * 9  # 10 lines: over 5, under 120
     _write_ledger(tmp_path, overrides={"AGENTS.md": over_custom_agents})
     _write_statutor_yaml(tmp_path, _STATUTOR_YAML_SOFT_MAX_5)
@@ -225,7 +222,6 @@ def test_stale_last_verified_warns(tmp_path, monkeypatch, capsys):
 
 
 def test_custom_stale_after_days_honored(tmp_path, monkeypatch, capsys):
-    pytest.importorskip("yaml")
     ten_days_ago = (date.today() - timedelta(days=10)).isoformat()
     _write_ledger(tmp_path, overrides={"HANDOFF.md": _handoff_text(ten_days_ago)})
     _write_statutor_yaml(tmp_path, _STATUTOR_YAML_STALE_30)
@@ -345,22 +341,14 @@ def test_no_statutor_yaml_present_produces_no_unapplied_warning(tmp_path, monkey
     assert "present but not applied" not in out
 
 
-def test_statutor_yaml_present_but_unapplied_warns_when_pyyaml_absent(tmp_path, monkeypatch, capsys):
-    """T-0009 gap 1: a .statutor.yaml the repo believes is governing it, but
-    that statutor_core.load_policy could not actually apply (here: PyYAML is
-    unavailable in this interpreter), must not pass as silent 'OK ledger
-    clean.' — that hides governance the repo thinks is active. Detection is
-    the documented identity check: load_policy(root) is
-    statutor_core.DEFAULT_POLICY while the file exists."""
+def test_statutor_yaml_applies_without_pyyaml(tmp_path, monkeypatch, capsys):
     _write_ledger(tmp_path)
     _write_statutor_yaml(tmp_path, _STATUTOR_YAML_SOFT_MAX_5)
     monkeypatch.setitem(sys.modules, "yaml", None)
     out, code = run_doctor(monkeypatch, capsys, tmp_path)
     assert code == 0
-    assert (
-        "WARN  .statutor.yaml present but not applied (PyYAML missing or file "
-        "invalid) — embedded defaults in effect."
-    ) in out
+    assert "OK    ledger clean." in out
+    assert "present but not applied" not in out
 
 
 def test_pristine_scaffold_statutor_yaml_never_warns_without_pyyaml(tmp_path, monkeypatch, capsys):
@@ -377,18 +365,13 @@ def test_pristine_scaffold_statutor_yaml_never_warns_without_pyyaml(tmp_path, mo
     assert "present but not applied" not in out
 
 
-def test_statutor_yaml_present_but_unapplied_warns_when_governed_key_missing(tmp_path, monkeypatch, capsys):
-    """Same drift, different cause: the file parses fine but lacks a
-    `governed` key, so statutor_core.load_policy falls back to DEFAULT_POLICY
-    wholesale (see test_kernel.py's matching load_policy coverage)."""
+def test_statutor_yaml_missing_governed_is_error(tmp_path, monkeypatch, capsys):
     _write_ledger(tmp_path)
     (tmp_path / ".statutor.yaml").write_text("bash_guard: false\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: {"bash_guard": False}
-    monkeypatch.setitem(sys.modules, "yaml", stub)
     out, code = run_doctor(monkeypatch, capsys, tmp_path)
-    assert code == 0
-    assert "present but not applied" in out
+    assert code == 1
+    assert "ERROR invalid .statutor.yaml" in out
+    assert "missing governed list" in out
 
 
 def test_statutor_yaml_present_and_applied_produces_no_unapplied_warning_stub_yaml(tmp_path, monkeypatch, capsys):

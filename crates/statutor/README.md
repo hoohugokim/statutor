@@ -10,7 +10,7 @@ This is not a port of Statutor. The policy kernel stays canonical in
 Python (`core/statutor_core.py`); this crate is a narrow, deliberately
 dumb twin whose *existence license* is continuous behavioral equivalence:
 [`tests/test_conformance_rust.py`](../../tests/test_conformance_rust.py)
-runs ~30 scenario repos through both implementations and fails CI on any
+runs 52 scenario repos through both implementations and fails CI on any
 divergence in exit code or output bytes (DECISIONS.md, D-0014). Interactive
 surfaces — hook mode, `check`, bash guard, apply_patch parsing, init — do
 not exist here and must never: they belong to the harnesses that have them.
@@ -26,14 +26,18 @@ Enforced on staged changes only:
 * `append_only` files: every HEAD line must survive byte-for-byte and in order
   in the index, independent of binary-diff and `.gitattributes` rendering
 * `overwrite_bounded` / `constitution` files: staged blob judged against
-  `max_lines` / `hard_max_lines` (fallback chain ends at 200) and
+  physical `max_lines` / `hard_max_lines` (fallback chain ends at 200) and
   `required_sections`
+* baseline policy comes only from HEAD and candidate policy only from the
+  index; both judge the complete transaction
+* `.statutor.yaml` and the exact managed `CLAUDE.md` bridge are protected by
+  the same exact-tree, mode-0600 Git-local receipt as the Python floor
 * any failed Git query or non-worktree invocation denies with an actionable
   floor error; only interactive hook mode retains its fail-open boundary
 
-Policy: `<repo>/.statutor.yaml` parsed via yaml-rust2; absence, parse
-failure, or a missing `governed` key falls back to embedded defaults,
-identically to the Python kernel.
+Policy uses Statutor's strict YAML subset. Absence means embedded defaults;
+present malformed/unsupported HEAD or index policy denies rather than falling
+back. Quoted numeric caps and trailing-newline line counts match Python.
 
 ## Install
 

@@ -8,7 +8,6 @@ pipes a JSON event on stdin), not by importing it as a module.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -155,8 +154,6 @@ def _custom_ledger(tmp_path: Path, stamp: str) -> None:
     (tmp_path / ".statutor.yaml").write_text(_CUSTOM_STATE_YAML, encoding="utf-8")
 
 
-@pytest.mark.skipif(importlib.util.find_spec("yaml") is None,
-                    reason="custom-policy subprocess needs real PyYAML")
 def test_sentinel_suppression_follows_policy_renamed_state_file(tmp_path):
     """A ledger whose overwrite_bounded file is named STATUS.md by policy
     gets the same fresh-scaffold courtesy as HANDOFF.md: one lone sentinel
@@ -168,8 +165,6 @@ def test_sentinel_suppression_follows_policy_renamed_state_file(tmp_path):
     assert result.stdout == ""
 
 
-@pytest.mark.skipif(importlib.util.find_spec("yaml") is None,
-                    reason="custom-policy subprocess needs real PyYAML")
 def test_real_drift_surfaces_on_policy_renamed_state_file(tmp_path):
     """Suppression must not go over-broad: a renamed state file with a real
     (non-sentinel) stale stamp is still reported, under its actual name."""

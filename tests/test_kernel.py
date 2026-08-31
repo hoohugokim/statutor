@@ -17,7 +17,6 @@ import os
 import shutil
 import subprocess
 import sys
-import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
@@ -80,7 +79,7 @@ def _guard_default_policy():
 # --------------------------------------------------------------------------
 
 def lines(n: int, trailing_newline: bool = False) -> str:
-    """n counted lines (content.count('\\n') + 1 == n) unless trailing_newline."""
+    """Exactly `n` physical lines, optionally terminated by LF."""
     content = "\n".join(f"x{i}" for i in range(n))
     return content + "\n" if trailing_newline else content
 
@@ -232,78 +231,69 @@ def test_load_policy_no_statutor_yaml_returns_default_identity(tmp_path):
     assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
 
 
-def test_load_policy_real_yaml_override(tmp_path):
-    pytest.importorskip("yaml")
+def test_load_policy_uses_committed_head_snapshot(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
     (tmp_path / ".statutor.yaml").write_text(
         "governed:\n  - pattern: TASKS.md\n    policy: append_only\n", encoding="utf-8")
+    commit_all(tmp_path, "policy")
     policy = statutor_core.load_policy(str(tmp_path))
     assert policy["governed"] == [{"pattern": "TASKS.md", "policy": "append_only"}]
     assert policy["bash_guard"] is True
 
 
-def test_load_policy_stub_yaml_override(tmp_path, monkeypatch):
-    (tmp_path / ".statutor.yaml").write_text("placeholder: true\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: {"governed": [{"pattern": "TASKS.md", "policy": "append_only"}]}
-    monkeypatch.setitem(sys.modules, "yaml", stub)
-    policy = statutor_core.load_policy(str(tmp_path))
-    assert policy["governed"] == [{"pattern": "TASKS.md", "policy": "append_only"}]
-    assert policy["bash_guard"] is True
-
-
-def test_load_policy_stub_yaml_bash_guard_false_not_forced_true(tmp_path, monkeypatch):
-    (tmp_path / ".statutor.yaml").write_text("placeholder: true\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: {
-        "governed": [{"pattern": "TASKS.md", "policy": "append_only"}], "bash_guard": False}
-    monkeypatch.setitem(sys.modules, "yaml", stub)
-    policy = statutor_core.load_policy(str(tmp_path))
-    assert policy["bash_guard"] is False
-
-
-def test_load_policy_malformed_yaml_falls_back(tmp_path):
-    (tmp_path / ".statutor.yaml").write_text("::: not yaml [", encoding="utf-8")
-    assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
-
-
-def test_load_policy_mapping_without_governed_key_falls_back(tmp_path):
-    (tmp_path / ".statutor.yaml").write_text("bash_guard: false\n", encoding="utf-8")
-    assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
-
-
-def test_load_policy_stub_yaml_mapping_without_governed_key_falls_back(tmp_path, monkeypatch):
-    """Same guarantee as the test above, but via the sys.modules stub so it
-    bites even when real PyYAML is on the interpreter: a .statutor.yaml that
-    parses to a dict with no 'governed' key must fall back to
-    DEFAULT_POLICY wholesale, not silently adopt a policy with zero
-    governed rules (which would make every mutation policy a no-op)."""
-    (tmp_path / ".statutor.yaml").write_text("bash_guard: false\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: {"bash_guard": False}
-    monkeypatch.setitem(sys.modules, "yaml", stub)
-    assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
-
-
-def test_load_policy_non_mapping_document_falls_back(tmp_path, monkeypatch):
-    (tmp_path / ".statutor.yaml").write_text("placeholder\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: ["a", "b"]
-    monkeypatch.setitem(sys.modules, "yaml", stub)
-    assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
-
-
-def test_load_policy_pyyaml_unavailable_falls_back(tmp_path, monkeypatch):
+def test_load_policy_ignores_unstaged_worktree_policy(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
     (tmp_path / ".statutor.yaml").write_text(
         "governed:\n  - pattern: TASKS.md\n    policy: append_only\n", encoding="utf-8")
+    commit_all(tmp_path, "policy")
+    (tmp_path / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
+    policy = statutor_core.load_policy(str(tmp_path))
+    assert policy["governed"] == [{"pattern": "TASKS.md", "policy": "append_only"}]
+
+
+def test_parse_policy_needs_no_pyyaml(monkeypatch):
     monkeypatch.setitem(sys.modules, "yaml", None)
-    assert statutor_core.load_policy(str(tmp_path)) is statutor_core.DEFAULT_POLICY
+    policy = statutor_core.parse_policy(
+        "bash_guard: false\ngoverned:\n"
+        "  - pattern: TASKS.md\n    policy: append_only\n")
+    assert policy == {"bash_guard": False, "governed": [
+        {"pattern": "TASKS.md", "policy": "append_only"}]}
 
 
-def test_load_policy_empty_governed_list_honored(tmp_path, monkeypatch):
-    (tmp_path / ".statutor.yaml").write_text("placeholder: true\n", encoding="utf-8")
-    stub = types.ModuleType("yaml")
-    stub.safe_load = lambda *a, **k: {"governed": []}
-    monkeypatch.setitem(sys.modules, "yaml", stub)
+def test_parse_policy_malformed_yaml_is_error():
+    with pytest.raises(statutor_core._PolicyFailure):
+        statutor_core.parse_policy("::: not yaml [")
+
+
+def test_parse_policy_mapping_without_governed_is_error():
+    with pytest.raises(statutor_core._PolicyFailure, match="missing governed"):
+        statutor_core.parse_policy("bash_guard: false\n")
+
+
+def test_parse_policy_unknown_keys_are_error():
+    with pytest.raises(statutor_core._PolicyFailure, match="unknown top-level"):
+        statutor_core.parse_policy("placeholder: true\ngoverned: []\n")
+
+
+def test_parse_policy_quoted_numeric_caps_normalized():
+    policy = statutor_core.parse_policy(
+        "governed:\n  - pattern: HANDOFF.md\n"
+        "    policy: overwrite_bounded\n    max_lines: \"40\"\n")
+    assert policy["governed"][0]["max_lines"] == 40
+
+
+def test_load_policy_malformed_committed_policy_is_error(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".statutor.yaml").write_text("::: not yaml [\n", encoding="utf-8")
+    commit_all(tmp_path, "bad policy")
+    with pytest.raises(statutor_core._PolicyFailure):
+        statutor_core.load_policy(str(tmp_path))
+
+
+def test_load_policy_empty_governed_list_honored(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
+    commit_all(tmp_path, "empty policy")
     policy = statutor_core.load_policy(str(tmp_path))
     assert policy["governed"] == []
     assert statutor_core._match_rule("DECISIONS.md", policy) is None
@@ -371,16 +361,17 @@ def test_constitution_exactly_at_cap_ok(tmp_path):
     assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
-def test_constitution_trailing_newline_off_by_one_quirk(tmp_path):
+def test_constitution_trailing_newline_does_not_invent_line(tmp_path):
     payload = {"file_path": str(tmp_path / "AGENTS.md"), "content": lines(200, trailing_newline=True)}
-    result = statutor_core.validate("write", payload, str(tmp_path), POLICY)
-    assert "201 lines" in result
+    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
-def test_constitution_edit_is_unchecked_quirk(tmp_path):
+def test_constitution_edit_result_over_cap_denied(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("x\n", encoding="utf-8")
     payload = {"file_path": str(tmp_path / "AGENTS.md"),
                "old_string": "x", "new_string": lines(300)}
-    assert statutor_core.validate("edit", payload, str(tmp_path), POLICY) is None
+    result = statutor_core.validate("edit", payload, str(tmp_path), POLICY)
+    assert "would be 300 lines (hard cap 200)" in result
 
 
 def test_constitution_custom_hard_max_lines_honored(tmp_path):
@@ -408,11 +399,10 @@ def test_overwrite_bounded_exactly_at_cap_ok(tmp_path):
     assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
-def test_overwrite_bounded_trailing_newline_off_by_one_quirk(tmp_path):
+def test_overwrite_bounded_trailing_newline_does_not_invent_line(tmp_path):
     content = handoff_padded(total_lines=40, trailing_newline=True)
     payload = {"file_path": str(tmp_path / "HANDOFF.md"), "content": content}
-    result = statutor_core.validate("write", payload, str(tmp_path), POLICY)
-    assert "41 lines" in result
+    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
 @pytest.mark.parametrize("section", REQUIRED_SECTIONS)
@@ -450,10 +440,27 @@ def test_overwrite_bounded_inline_mention_satisfies_sections_quirk(tmp_path):
     assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
-def test_overwrite_bounded_edit_is_unchecked_quirk(tmp_path):
+def test_overwrite_bounded_edit_result_over_cap_denied(tmp_path):
+    (tmp_path / "HANDOFF.md").write_text("x\n", encoding="utf-8")
     payload = {"file_path": str(tmp_path / "HANDOFF.md"),
                "old_string": "x", "new_string": lines(300)}
-    assert statutor_core.validate("edit", payload, str(tmp_path), POLICY) is None
+    result = statutor_core.validate("edit", payload, str(tmp_path), POLICY)
+    assert "would be 300 lines (cap 40)" in result
+
+
+def test_overwrite_bounded_edit_rechecks_required_sections(tmp_path):
+    original = handoff()
+    (tmp_path / "HANDOFF.md").write_text(original, encoding="utf-8")
+    payload = {"file_path": "HANDOFF.md", "old_string": "## Goal", "new_string": "## Aim"}
+    result = statutor_core.validate("edit", payload, str(tmp_path), POLICY)
+    assert "missing required sections: ## Goal" in result
+
+
+def test_relative_tool_path_resolves_against_explicit_cwd(tmp_path):
+    (tmp_path / "plans" / "archive").mkdir(parents=True)
+    payload = {"file_path": "plans/archive/a.md", "content": "changed\n"}
+    result = statutor_core.validate("write", payload, str(tmp_path), POLICY)
+    assert "frozen" in result
 
 
 def test_overwrite_bounded_custom_rule_honored(tmp_path):
@@ -1456,6 +1463,146 @@ def test_staged_output_prefix_format(ledger_repo, capsys):
     for line in out.splitlines():
         if line:
             assert line.startswith("STATUTOR  ")
+
+
+def commit_trust_roots(repo: Path, *, managed_bridge: bool = False) -> None:
+    (repo / ".statutor.yaml").write_text(
+        statutor_core.TEMPLATES[".statutor.yaml"], encoding="utf-8")
+    if managed_bridge:
+        (repo / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    commit_all(repo, "trust roots")
+
+
+@git_required
+def test_staged_unstaged_policy_weakening_cannot_disable_head_rules(
+        ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    (ledger_repo / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
+    (ledger_repo / "DECISIONS.md").write_text("rewritten\n", encoding="utf-8")
+    git(ledger_repo, "add", "DECISIONS.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    out = capsys.readouterr().out
+    assert "append-only" in out
+    assert "trust-root change" not in out
+
+
+@git_required
+def test_staged_costaged_weakening_needs_receipt_and_cannot_relax_baseline(
+        ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    (ledger_repo / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
+    (ledger_repo / "DECISIONS.md").write_text("rewritten\n", encoding="utf-8")
+    git(ledger_repo, "add", ".statutor.yaml", "DECISIONS.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    out = capsys.readouterr().out
+    assert "trust-root change requires" in out
+    assert "append-only" in out
+
+
+@git_required
+def test_staged_policy_only_change_requires_exact_tree_receipt(ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    path = ledger_repo / ".statutor.yaml"
+    path.write_text(path.read_text() + "\n", encoding="utf-8")
+    git(ledger_repo, "add", ".statutor.yaml")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    assert "missing, stale, or unsafe receipt" in capsys.readouterr().out
+
+
+@git_required
+def test_staged_candidate_policy_is_strict_parse_error(ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    (ledger_repo / ".statutor.yaml").write_text("unknown: true\ngoverned: []\n", encoding="utf-8")
+    git(ledger_repo, "add", ".statutor.yaml")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    assert ":.statutor.yaml: invalid or unsupported" in capsys.readouterr().out
+
+
+@git_required
+def test_staged_bootstrap_candidate_policy_judges_same_transaction(tmp_path, capsys):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "NOTES.md").write_text("original\n", encoding="utf-8")
+    commit_all(tmp_path, "unmanaged note")
+    (tmp_path / ".statutor.yaml").write_text(
+        "governed:\n  - pattern: NOTES.md\n    policy: append_only\n", encoding="utf-8")
+    (tmp_path / "NOTES.md").write_text("rewritten\n", encoding="utf-8")
+    git(tmp_path, "add", ".statutor.yaml", "NOTES.md")
+    assert statutor_core.run_staged(str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "NOTES.md: append-only" in out
+    assert "trust-root change" not in out
+
+
+@git_required
+def test_staged_managed_claude_bridge_change_requires_receipt(ledger_repo, capsys):
+    commit_trust_roots(ledger_repo, managed_bridge=True)
+    (ledger_repo / "CLAUDE.md").write_text("# replacement\n", encoding="utf-8")
+    git(ledger_repo, "add", "CLAUDE.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    assert "['CLAUDE.md']" in capsys.readouterr().out
+
+
+@git_required
+def test_staged_unmanaged_claude_file_remains_human_owned(ledger_repo, capsys):
+    (ledger_repo / "CLAUDE.md").write_text("# human\n", encoding="utf-8")
+    commit_trust_roots(ledger_repo)
+    (ledger_repo / "CLAUDE.md").write_text("# human changed\n", encoding="utf-8")
+    git(ledger_repo, "add", "CLAUDE.md")
+    assert statutor_core.run_staged(str(ledger_repo)) == 0
+    assert capsys.readouterr().out == ""
+
+
+@git_required
+def test_trust_approve_writes_mode_0600_exact_tree_receipt(ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    path = ledger_repo / ".statutor.yaml"
+    path.write_text(path.read_text().replace("hard_max_lines: 200", "hard_max_lines: 190"),
+                    encoding="utf-8")
+    git(ledger_repo, "add", ".statutor.yaml")
+    _, _, snapshots = statutor_core._policy_snapshots(str(ledger_repo))
+    reserved = statutor_core._reserved_changes(str(ledger_repo), snapshots)
+    tree = statutor_core._trust_context(str(ledger_repo), snapshots, reserved)["index_tree_oid"]
+    code = statutor_core.run_trust_approve([
+        str(ledger_repo), "--decision", "D-0015", "--reason", "tighten cap",
+        "--confirm-tree", tree,
+    ])
+    assert code == 0
+    capsys.readouterr()
+    receipt = Path(statutor_core._git_local_path(
+        str(ledger_repo), "statutor/trust-receipt.json"))
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert statutor_core.run_staged(str(ledger_repo)) == 0
+    assert capsys.readouterr().out == ""
+
+
+@git_required
+def test_trust_receipt_expires_when_index_tree_changes(ledger_repo, capsys):
+    commit_trust_roots(ledger_repo)
+    path = ledger_repo / ".statutor.yaml"
+    path.write_text(path.read_text().replace("hard_max_lines: 200", "hard_max_lines: 190"),
+                    encoding="utf-8")
+    git(ledger_repo, "add", ".statutor.yaml")
+    _, _, snapshots = statutor_core._policy_snapshots(str(ledger_repo))
+    reserved = statutor_core._reserved_changes(str(ledger_repo), snapshots)
+    tree = statutor_core._trust_context(str(ledger_repo), snapshots, reserved)["index_tree_oid"]
+    assert statutor_core.run_trust_approve([
+        str(ledger_repo), "--decision", "D-0015", "--reason", "tighten cap",
+        "--confirm-tree", tree]) == 0
+    capsys.readouterr()
+    (ledger_repo / "README.tmp").write_text("later\n", encoding="utf-8")
+    git(ledger_repo, "add", "README.tmp")
+    assert statutor_core.run_staged(str(ledger_repo)) == 1
+    assert "stale" in capsys.readouterr().out
+
+
+def test_policy_change_classifier_is_conservative():
+    base = copy.deepcopy(statutor_core.DEFAULT_POLICY)
+    tighter = copy.deepcopy(base)
+    tighter["governed"][0]["hard_max_lines"] = 190
+    assert statutor_core._policy_change_class(base, tighter) == "non-weakening"
+    weaker = copy.deepcopy(base)
+    weaker["governed"].pop()
+    assert statutor_core._policy_change_class(base, weaker) == "weakening-or-incomparable"
 
 
 # --------------------------------------------------------------------------

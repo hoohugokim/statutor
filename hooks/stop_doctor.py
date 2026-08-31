@@ -52,7 +52,7 @@ def _state_filename(project_dir: str) -> str:
             sys.path.insert(0, CORE_DIR)
         import statutor_core
 
-        for rule in statutor_core.load_policy(project_dir).get("governed", []):
+        for rule in statutor_core.load_worktree_policy(project_dir).get("governed", []):
             pattern = rule.get("pattern", "")
             if (rule.get("policy") == "overwrite_bounded" and pattern
                     and "*" not in pattern and "/" not in pattern):

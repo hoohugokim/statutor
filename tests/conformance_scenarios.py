@@ -29,6 +29,20 @@ HANDOFF_BODY = (
     "## Gotchas\ngo\n\n## Do not touch\nd\n"
 )
 
+TRUST_POLICY = (
+    "bash_guard: true\n"
+    "governed:\n"
+    "  - pattern: AGENTS.md\n    policy: constitution\n    hard_max_lines: 200\n"
+    "  - pattern: HANDOFF.md\n    policy: overwrite_bounded\n    max_lines: 40\n"
+    "    required_sections:\n"
+    "      - \"## Goal\"\n      - \"## Last verified state\"\n"
+    "      - \"## Next action\"\n      - \"## Gotchas\"\n"
+    "      - \"## Do not touch\"\n"
+    "  - pattern: DECISIONS.md\n    policy: append_only\n"
+    "  - pattern: TASKS.md\n    policy: state\n"
+    "  - pattern: plans/archive/*\n    policy: frozen\n"
+)
+
 
 def git(cwd, *args) -> None:
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
@@ -56,6 +70,13 @@ def base_ledger(root: Path) -> None:
 def drop_last_line(path: Path) -> None:
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     path.write_text("".join(lines[:-1]), encoding="utf-8")
+
+
+def padded_handoff(total_lines: int) -> str:
+    body = HANDOFF_BODY.rstrip("\n").splitlines()
+    body.extend(f"filler-{i}" for i in range(total_lines - len(body)))
+    assert len(body) == total_lines
+    return "\n".join(body) + "\n"
 
 
 # --------------------------------------------------------------------------
@@ -296,9 +317,8 @@ def s29_statutor_yaml_custom_names(root: Path) -> None:
     git(root, "add", "DECISIONS.md")
 
 
-def s30_malformed_statutor_yaml_falls_back(root: Path) -> None:
-    """Unparseable policy file: both kernels must fall back to embedded
-    defaults rather than crash or silently unguard."""
+def s30_malformed_statutor_yaml_fails_closed(root: Path) -> None:
+    """A present malformed baseline policy is a floor error, never fallback."""
     base_ledger(root)
     (root / ".statutor.yaml").write_text("::: not yaml [\n", encoding="utf-8")
     git(root, "add", ".statutor.yaml"); git(root, "commit", "-q", "-m", "cfg")
@@ -371,6 +391,103 @@ def s42_rename_within_same_rule(root: Path) -> None:
     base_ledger(root)
     (root / "docs").mkdir()
     git(root, "mv", "DECISIONS.md", "docs/DECISIONS.md")
+
+
+def s43_quoted_cap_exact_trailing_lf(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(
+        "governed:\n"
+        "  - pattern: HANDOFF.md\n"
+        "    policy: overwrite_bounded\n"
+        "    max_lines: \"40\"\n"
+        "    required_sections:\n"
+        "      - \"## Goal\"\n"
+        "      - \"## Last verified state\"\n"
+        "      - \"## Next action\"\n"
+        "      - \"## Gotchas\"\n"
+        "      - \"## Do not touch\"\n",
+        encoding="utf-8")
+    git(root, "add", ".statutor.yaml")
+    git(root, "commit", "-q", "-m", "policy")
+    (root / "HANDOFF.md").write_text(padded_handoff(40), encoding="utf-8")
+    git(root, "add", "HANDOFF.md")
+
+
+def s44_quoted_cap_over_trailing_lf(root: Path) -> None:
+    s43_quoted_cap_exact_trailing_lf(root)
+    (root / "HANDOFF.md").write_text(padded_handoff(41), encoding="utf-8")
+    git(root, "add", "HANDOFF.md")
+
+
+def s45_unstaged_policy_weakening_ignored(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    git(root, "add", ".statutor.yaml"); git(root, "commit", "-q", "-m", "policy")
+    (root / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
+    (root / "DECISIONS.md").write_text("rewritten\n", encoding="utf-8")
+    git(root, "add", "DECISIONS.md")
+
+
+def s46_costaged_policy_weakening_cannot_self_authorize(root: Path) -> None:
+    s45_unstaged_policy_weakening_ignored(root)
+    git(root, "add", ".statutor.yaml")
+
+
+def s47_policy_change_requires_receipt(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    git(root, "add", ".statutor.yaml"); git(root, "commit", "-q", "-m", "policy")
+    (root / ".statutor.yaml").write_text(TRUST_POLICY + "\n", encoding="utf-8")
+    git(root, "add", ".statutor.yaml")
+
+
+def s48_malformed_candidate_policy_fails_closed(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    git(root, "add", ".statutor.yaml"); git(root, "commit", "-q", "-m", "policy")
+    (root / ".statutor.yaml").write_text("unknown: true\ngoverned: []\n", encoding="utf-8")
+    git(root, "add", ".statutor.yaml")
+
+
+def s49_managed_claude_bridge_change_needs_receipt(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    git(root, "add", ".statutor.yaml", "CLAUDE.md"); git(root, "commit", "-q", "-m", "roots")
+    (root / "CLAUDE.md").write_text("# replacement\n", encoding="utf-8")
+    git(root, "add", "CLAUDE.md")
+
+
+def s50_unmanaged_claude_change_allowed(root: Path) -> None:
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    (root / "CLAUDE.md").write_text("# human\n", encoding="utf-8")
+    git(root, "add", ".statutor.yaml", "CLAUDE.md"); git(root, "commit", "-q", "-m", "roots")
+    (root / "CLAUDE.md").write_text("# human changed\n", encoding="utf-8")
+    git(root, "add", "CLAUDE.md")
+
+
+def s51_bootstrap_candidate_policy_judges_transaction(root: Path) -> None:
+    init_repo(root)
+    (root / "NOTES.md").write_text("original\n", encoding="utf-8")
+    git(root, "add", "NOTES.md"); git(root, "commit", "-q", "-m", "note")
+    (root / ".statutor.yaml").write_text(
+        "governed:\n  - pattern: NOTES.md\n    policy: append_only\n", encoding="utf-8")
+    (root / "NOTES.md").write_text("rewritten\n", encoding="utf-8")
+    git(root, "add", ".statutor.yaml", "NOTES.md")
+
+
+def s52_exact_tree_receipt_authorizes_policy_change(root: Path) -> None:
+    s47_policy_change_requires_receipt(root)
+    tree = subprocess.run(
+        ["git", "write-tree"], cwd=root, env=GIT_ENV, capture_output=True,
+        text=True, check=True).stdout.strip()
+    kernel = REPO_ROOT / "core" / "statutor_core.py"
+    subprocess.run(
+        [__import__("sys").executable, str(kernel), "trust", "approve", str(root),
+         "--decision", "D-0015", "--reason", "conformance fixture",
+         "--confirm-tree", tree],
+        cwd=root, env=GIT_ENV, capture_output=True, text=True, check=True)
 
 
 SCENARIOS = {

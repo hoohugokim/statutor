@@ -12,7 +12,6 @@ the suite's other optional-dependency skips.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
@@ -31,13 +30,6 @@ CRATE = REPO_ROOT / "crates" / "statutor"
 NO_GIT = cs.no_git()
 git_required = pytest.mark.skipif(NO_GIT, reason="git not available")
 
-# Scenarios whose whole point is a .statutor.yaml the PYTHON side must parse:
-# without PyYAML the Python kernel silently falls back to embedded defaults
-# while Rust applies the file — an environmental false divergence, not a
-# behavioral one. They run in CI's pyyaml leg.
-PYAML_AVAILABLE = importlib.util.find_spec("yaml") is not None
-NEEDS_PYAML = {"s25_statutor_yaml_governed_empty", "s29_statutor_yaml_custom_names"}
-
 # Semantic expectations for the lifecycle/failure cases repaired by T-0025.
 # Differential parity is necessary but insufficient: these assertions prevent
 # both implementations from agreeing on the old permissive behavior.
@@ -48,6 +40,7 @@ EXPECTED = {
     "s12_rename_out_of_archive": (1, "frozen"),
     "s23_not_a_git_repo": (1, "git rev-parse --is-inside-work-tree failed"),
     "s27_rename_r100_exact": (1, "record cannot move"),
+    "s30_malformed_statutor_yaml_fails_closed": (1, "invalid or unsupported Statutor policy"),
     "s31_delete_agents_record": (1, "record cannot be deleted"),
     "s32_rename_agents_out": (1, "record cannot move"),
     "s33_delete_handoff_record": (1, "record cannot be deleted"),
@@ -60,6 +53,16 @@ EXPECTED = {
     "s40_missing_index": (1, "record cannot be deleted"),
     "s41_append_only_middle_insertion": (0, ""),
     "s42_rename_within_same_rule": (0, ""),
+    "s43_quoted_cap_exact_trailing_lf": (0, ""),
+    "s44_quoted_cap_over_trailing_lf": (1, "41 lines (cap 40)"),
+    "s45_unstaged_policy_weakening_ignored": (1, "append-only"),
+    "s46_costaged_policy_weakening_cannot_self_authorize": (1, "trust-root change requires"),
+    "s47_policy_change_requires_receipt": (1, "missing, stale, or unsafe receipt"),
+    "s48_malformed_candidate_policy_fails_closed": (1, "invalid or unsupported Statutor policy"),
+    "s49_managed_claude_bridge_change_needs_receipt": (1, "CLAUDE.md"),
+    "s50_unmanaged_claude_change_allowed": (0, ""),
+    "s51_bootstrap_candidate_policy_judges_transaction": (1, "NOTES.md: append-only"),
+    "s52_exact_tree_receipt_authorizes_policy_change": (0, ""),
 }
 
 
@@ -145,8 +148,6 @@ def _scenario_ids() -> list[str]:
 @git_required
 @pytest.mark.parametrize("name", _scenario_ids())
 def test_rust_matches_python(tmp_path: Path, name: str, staged_bin: Path) -> None:
-    if name in NEEDS_PYAML and not PYAML_AVAILABLE:
-        pytest.skip("scenario needs a PyYAML-capable python kernel")
     repo = tmp_path / name
     repo.mkdir()
     cs.SCENARIOS[name](repo)

@@ -20,7 +20,8 @@ path. No hand-maintained CHANGELOG.md: git log + conventional commits.
 ## Kernel / adapter architecture
 
     core/statutor_core.py     single-file kernel: validate() + embedded templates
-                          modes: hook | check | staged | init   (fail-open hooks)
+                          modes: hook | check | staged | init | trust approve
+                          (fail-open hooks; staged floor fails closed)
     core/statutor_doctor.py   drift linter (stale stamps, budgets, unarchived plans)
     hooks/stop_doctor.py  Claude Code Stop hook: runs statutor-doctor after each
                           turn and surfaces its WARN/ERROR lines as
@@ -66,7 +67,22 @@ mandatory there.
     # git floor for every repo:
     #   .pre-commit-config.yaml → repo: <this repo>, hooks: [{id: statutor}]
 
-Per-repo policy overrides: `.statutor.yaml` (embedded defaults apply without it).
+Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
+HEAD snapshot; the git floor judges the transaction under both HEAD and the
+candidate index snapshot, so an unstaged or co-staged weakening cannot disable
+existing rules. The format is a strict, zero-dependency YAML subset shared by
+Python and Rust; malformed or unsupported committed/candidate policy denies.
+
+After bootstrap, changing `.statutor.yaml` or Statutor's exact
+`CLAUDE.md` → `@AGENTS.md` bridge requires an exact-tree Git-local receipt:
+
+    git add .statutor.yaml
+    statutor trust approve . --decision D-0015 --reason "why this changes trust"
+    statutor staged .
+
+Approval displays the reserved diff and all staged paths, then requires the
+complete candidate tree ID. The mode-0600 receipt expires on any HEAD or index
+change and is never committed.
 
 ## Provenance
 

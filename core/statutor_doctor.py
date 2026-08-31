@@ -4,9 +4,7 @@
 Run from the repo root (or pass the root as argv[1]). Checks what the
 PreToolUse hook cannot catch synchronously:
 
-  * .statutor.yaml present but not applied (PyYAML missing, or the file is
-    malformed / lacks a `governed` key — statutor_core.load_policy fell back
-    to embedded defaults silently)
+  * .statutor.yaml malformed or outside Statutor's deterministic YAML subset
   * governed files missing entirely
   * the constitution file over soft budget (hook only enforces the hard cap)
   * the overwrite_bounded file's stale `last_verified:` stamp (default:
@@ -74,23 +72,12 @@ def check(root: str) -> None:
     def p(name: str) -> str:
         return os.path.join(root, name)
 
-    policy = statutor_core.load_policy(root)
+    try:
+        policy = statutor_core.load_worktree_policy(root)
+    except statutor_core._PolicyFailure as exc:
+        errors.append(f"invalid .statutor.yaml: {exc}")
+        policy = statutor_core.DEFAULT_POLICY
     governed = policy.get("governed", [])
-
-    if os.path.isfile(p(".statutor.yaml")) and policy is statutor_core.DEFAULT_POLICY:
-        # A file byte-identical to the scaffold template IS the embedded
-        # defaults — falling back loses nothing, so a fresh `statutor init`
-        # ledger on a PyYAML-less interpreter must not warn on every run.
-        try:
-            pristine = open(p(".statutor.yaml"), encoding="utf-8").read() \
-                == statutor_core.TEMPLATES[".statutor.yaml"]
-        except Exception:
-            pristine = False
-        if not pristine:
-            warnings.append(
-                ".statutor.yaml present but not applied (PyYAML missing or file "
-                "invalid) — embedded defaults in effect."
-            )
 
     check_names = [
         rule["pattern"] for rule in governed

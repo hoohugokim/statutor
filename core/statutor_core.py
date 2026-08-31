@@ -21,6 +21,7 @@ Entry modes (all share the same validate() core):
   statutor staged [CWD]   Git floor: validate staged changes (pre-commit).
                           exit 1 on violations.
   statutor init [DIR]     Scaffold governed files from embedded templates.
+  statutor global ...     Opt-in global instruction and skill projection manager.
 
 No third-party dependencies. The policy format is a deterministic YAML subset;
 PyYAML is optional for ancillary tooling, never required by the trust floor.
@@ -1309,6 +1310,9 @@ def main() -> None:
         sys.exit(run_trust_approve(argv[2:]))
     if mode == "init":
         sys.exit(run_init(argv[1] if len(argv) > 1 else os.getcwd()))
+    if mode == "global":
+        import statutor_global_cli
+        sys.exit(statutor_global_cli.main(argv[1:]))
     print(__doc__)
     sys.exit(64)
 

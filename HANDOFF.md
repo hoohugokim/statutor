@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `pytest 390/5; global primitives 30; compile/diff clean; prior release gate green`
+last_verified: 2026-08-31 by `pytest 400/5; global fake-root suites 40; compile/diff clean; prior release gate green`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -16,11 +16,14 @@ portable user layer: human canonical sources, whole-file/tree projections,
 CAS receipts/backups, stable diagnostics, and fake-home-only implementation.
 T-0032 implements the resolver, strict JSON schemas, safe deterministic hashes,
 state lock/journals, durable file/tree CAS, and exact backup/restore primitives.
+T-0033 exposes deterministic instruction projections and init/plan/adopt/apply/
+status/uninstall with pre-displayed plans, byte-preserving adoption, receipts,
+rollback, modified-target refusal, and Claude/Codex/OpenCode precedence warnings.
 
 ## Next action
-Implement T-0033's instruction lifecycle and CLI: global init/plan/adopt/apply/
-status/uninstall across Claude, Codex, and OpenCode v1, with whole-file
-ownership, precedence warnings, receipts, and fake-home integration tests.
+Implement T-0034's Agent Skill import/status/plan/apply/sync/uninstall lifecycle:
+strict open-spec validation, safe source copies, portable + Claude projections,
+foreign-lock coexistence, duplicate classification, and CAS receipts.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

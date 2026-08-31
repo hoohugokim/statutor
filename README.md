@@ -29,6 +29,8 @@ archive exists (D-0016).
                           modes: hook | check | staged | init | trust approve
                           (fail-open hooks; staged floor fails closed)
     core/statutor_doctor.py   drift linter (stale stamps, budgets, unarchived plans)
+    core/statutor_global.py   global-layer roots, schemas, hashes, CAS, backups
+    core/statutor_global_cli.py  opt-in instruction/skill projection lifecycle
     hooks/stop_doctor.py  Claude Code Stop hook: runs statutor-doctor after each
                           turn and surfaces its WARN/ERROR lines as
                           additionalContext — non-blocking, silent when the
@@ -101,6 +103,28 @@ all package payloads, builds the Python sdist and wheel in scratch space,
 installs the wheel into an isolated target, and smoke-tests both console
 scripts. A tagged release additionally passes `--tag vX.Y.Z --dist-dir dist`;
 verified artifacts are copied only after every check succeeds.
+
+## Portable user layer (v0.4)
+
+The global layer is opt-in and separate from project ledgers. `init` creates
+only human-owned canonical sources and versioned state; it does not change any
+host file. `plan`, `status`, and `--json` are read-only. `apply` owns only
+whole generated files it created, while `adopt HOST` backs up an existing
+regular file and imports its bytes verbatim into that host's canonical overlay.
+
+    statutor global init
+    statutor global plan --json
+    statutor global apply --host codex
+    statutor global status --json
+    statutor global adopt claude
+    statutor global uninstall --host codex
+
+Every mutation prints its resolved plan first. Existing unmanaged targets are
+conflicts, managed hand edits are never overwritten or removed, and uninstall
+restores the original backup. `--home`, `--config-root`, and `--state-root`
+provide explicit isolated roots for tests and alternate profiles. Codex
+overrides and OpenCode's Claude fallback are reported as precedence warnings;
+Statutor never rewrites them.
 
 ## Provenance
 

@@ -122,6 +122,7 @@ def _audit_sdist(path: Path, version: str) -> None:
         "core/statutor_core.py",
         "core/statutor_doctor.py",
         "core/statutor_global.py",
+        "core/statutor_global_cli.py",
     }
     seen: set[str] = set()
     private_markers = (b"/Users/", b"/home/", b"C:\\Users\\")
@@ -155,6 +156,7 @@ def _audit_wheel(path: Path, version: str) -> None:
         "statutor_core.py",
         "statutor_doctor.py",
         "statutor_global.py",
+        "statutor_global_cli.py",
         f"{dist}/METADATA",
         f"{dist}/RECORD",
         f"{dist}/WHEEL",
@@ -219,6 +221,31 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
         }),
         str(ledger),
     ], env=smoke_env, expected=2)
+
+    global_home = scratch / "global-home"
+    global_config = scratch / "global-config"
+    global_state = scratch / "global-state"
+    global_env = dict(smoke_env)
+    for name in (
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+    ):
+        global_env.pop(name, None)
+    roots = [
+        "--home", str(global_home),
+        "--config-root", str(global_config),
+        "--state-root", str(global_state),
+    ]
+    _run([str(statutor), "global", "init", *roots, "--json"], env=global_env)
+    _run([
+        str(statutor), "global", "plan", *roots, "--host", "codex", "--json",
+    ], env=global_env)
+    _run([
+        str(statutor), "global", "apply", *roots, "--host", "codex", "--json",
+    ], env=global_env)
+    if not (global_home / ".codex" / "AGENTS.md").is_file():
+        raise RuntimeError("installed global CLI did not create Codex projection")
+    if (global_home / ".claude" / "CLAUDE.md").exists():
+        raise RuntimeError("host-scoped global apply touched unselected Claude target")
 
 
 def _build_and_smoke(source: Path, workspace: Path, version: str) -> list[Path]:

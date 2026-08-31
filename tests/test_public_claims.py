@@ -20,8 +20,8 @@ def test_install_snippets_use_real_repository_and_supported_pin() -> None:
     assert f"/plugin marketplace add {expected_repo}" in root
     assert f"repo: {expected_repo}" in root
     assert f"repo: {expected_repo}" in git_adapter
-    assert "rev: v0.3.0" in root
-    assert "rev: v0.3.0" in git_adapter
+    assert "rev: v0.3.1" in root
+    assert "rev: v0.3.1" in git_adapter
     for stale in ("<path-or-url>", "<this repo>", "<your statutor repo url>", "rev: v0.2.0"):
         assert stale not in root
         assert stale not in git_adapter

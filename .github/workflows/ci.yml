@@ -137,8 +137,8 @@ jobs:
           # Last step of the job — no need to restore the worktree, the
           # runner is discarded right after.
 
-  rust-conformance:
-    name: rust floor ≡ python kernel (D-0014 conformance gate)
+  release-gate:
+    name: release gate (artifacts + rust/python parity)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -153,27 +153,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build the statutor-staged binary (locked)
-        run: cargo build --locked --release --manifest-path crates/statutor/Cargo.toml
-
-      - name: Rust unit tests
-        run: cargo test --release --manifest-path crates/statutor/Cargo.toml
-
-      - name: Differential conformance — Python ≡ Rust on every scenario
+      - name: Install release-gate dependencies
         run: |
-          python -m pip install --upgrade pip pytest
-          python -m pytest -q tests/test_conformance_rust.py
+          python -m pip install --upgrade pip
+          python -m pip install build pytest
 
-      - name: Audit Cargo and npm package payloads
-        env:
-          STATUTOR_PACKAGE_AUDIT: "1"
-        run: |
-          cargo --version
-          npm --version
-          tracked_target="$(git ls-files -- crates/statutor/target)"
-          if [ -n "$tracked_target" ]; then
-            echo "tracked Cargo target/ output:" >&2
-            printf '%s\n' "$tracked_target" >&2
-            exit 1
-          fi
-          python -m pytest -q tests/test_package_payloads.py
+      - name: Build, audit, install, and smoke every release artifact
+        run: python scripts/release_gate.py

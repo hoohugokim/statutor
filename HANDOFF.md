@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-08-31 by `full pytest 357/5; package audit 3; doctor clean; JSON/diff clean`
+last_verified: 2026-08-31 by `release gate: pytest 362/3; Rust 7; exact sdist/wheel/npm/crate; installed CLI smoke`
 
 ## Goal
 Repair v0.3's trust/release gaps, then build the specified v0.4 portable user
@@ -17,12 +17,14 @@ and ignore generic AGENTS-only repos. Shell/editor/apply_patch, doctor, and both
 floors enforce the state contract. The floor carries 59 semantic scenarios;
 malformed policy/Git failures deny. D-0017 and public-claim tests now confine
 the native twin to local staged-index use and keep install examples exact.
+The exact-index release gate prepares Python/plugin 0.3.1, audits four package
+formats, installs the wheel, and gates tag parity. Nothing was published.
 
 ## Next action
-Build T-0030's release gate: test built wheel/sdist/npm/crate artifacts, enforce
-metadata/tag parity, bump the Python/plugin patch version, and leave immutable
-publication for explicit human action. Real-home dogfood remains separately
-gated.
+Start T-0031 on a v0.4 feature branch: verify current host contracts and record
+the bounded user-layer decision for canonical global instructions and Agent
+Skills. All implementation and tests use fake homes; real-home dogfood remains
+separately gated.
 
 ## Gotchas
 Homebrew rustc 1.98 is healthy after installing llvm@22; fresh isolated builds

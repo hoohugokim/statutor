@@ -1,0 +1,8 @@
+include LICENSE
+include MANIFEST.in
+include README.md
+include pyproject.toml
+include core/statutor_core.py
+include core/statutor_doctor.py
+prune tests
+global-exclude __pycache__ *.py[cod]

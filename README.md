@@ -73,7 +73,7 @@ mandatory there.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.3.0
+        rev: v0.3.1
         hooks: [{id: statutor}]
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
@@ -92,6 +92,15 @@ After bootstrap, changing `.statutor.yaml` or Statutor's exact
 Approval displays the reserved diff and all staged paths, then requires the
 complete candidate tree ID. The mode-0600 receipt expires on any HEAD or index
 change and is never committed.
+
+## Release gate
+
+With Python `build`/`pytest`, Cargo, and npm available, stage the candidate and
+run `python scripts/release_gate.py`. The gate tests the exact Git index, audits
+all package payloads, builds the Python sdist and wheel in scratch space,
+installs the wheel into an isolated target, and smoke-tests both console
+scripts. A tagged release additionally passes `--tag vX.Y.Z --dist-dir dist`;
+verified artifacts are copied only after every check succeeds.
 
 ## Provenance
 

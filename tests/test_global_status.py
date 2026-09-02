@@ -316,9 +316,15 @@ def test_invalid_documents_are_doctor_errors_not_status_crashes(tmp_path: Path) 
 
 
 def test_status_cli_exits_zero_but_doctor_exits_one_on_audit_errors(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     roots = _roots(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", roots.claude_home)
+    monkeypatch.setenv("CODEX_HOME", roots.codex_home)
+    monkeypatch.setenv(
+        "XDG_CONFIG_HOME", str(Path(roots.opencode_home).parent))
     unsafe = _skill(Path(roots.opencode_home) / "skills", "unsafe-skill")
     (unsafe / "cycle").symlink_to(unsafe, target_is_directory=True)
     args = [

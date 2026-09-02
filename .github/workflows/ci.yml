@@ -34,7 +34,24 @@ jobs:
           python -m pip install -e . pytest
 
       - name: Run test suite
-        run: pytest -q
+        shell: bash
+        run: |
+          set +e
+          pytest -q 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            python - <<'PY'
+          from pathlib import Path
+
+          text = Path("pytest.log").read_text(errors="replace")[-12000:]
+          escaped = (text.replace("%", "%25")
+                         .replace("\r", "%0D")
+                         .replace("\n", "%0A"))
+          print(f"::error title=pytest failure::{escaped}")
+          PY
+          fi
+          exit "$status"
 
       - name: Smoke-test console scripts
         run: |

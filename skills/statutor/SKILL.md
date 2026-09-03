@@ -25,6 +25,14 @@ Non-negotiable rules:
 2. **HANDOFF.md is a shift-change note.** Overwrite, never append. Max 40
    lines, mandatory sections (Goal / Last verified state / Next action /
    Gotchas / Do not touch), `last_verified: YYYY-MM-DD by <command>` stamp.
+   Optional v0.5 provenance block beside the stamp (absent = valid old
+   ledger): `last_worker` (stable harness id or `unknown`), `last_machine`
+   (opaque machine id or `unknown`), `handoff_id` (fresh random id per
+   rewrite, `none` when unattributed), `supersedes` (prior id(s), `none`
+   when none). Each rewrite mints a fresh `handoff_id` superseding the
+   prior; a reconciliation names every sibling id. Record completion with
+   `statutor worker complete --session <id>`; compare refs read-only with
+   `statutor worker compare <ref>` — Statutor never merges HANDOFF for you.
 3. **DECISIONS.md is append-only.** Micro-ADRs (`## D-NNNN`, Status/Context/
    Decision/Consequences). Supersede by appending — never edit. Read it
    before re-opening any settled question.

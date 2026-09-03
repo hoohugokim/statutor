@@ -1,33 +1,31 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-09-02 by `git diff --check && statutor-doctor .`
+last_verified: 2026-09-03 by `python3 -m pytest -q` (488 passed/2 skipped) + worktree staged floor
+last_worker: unknown
+last_machine: unknown
+handoff_id: none
+supersedes: none
 
 ## Goal
-Dogfood published v0.4.0 global instructions and skills across Claude Code,
-Codex, and later OpenCode; preserve real findings for corrective patches.
+Finish v0.5 worker-provenance prototype (T-0038..T-0041), then run
+multi-model adversarial validation reviews before any release gate.
 
 ## Last verified state
-v0.4.0 is published and installed for real-home dogfood. Claude and Codex
-global instruction targets were safely adopted: both are Statutor-owned,
-mode 0600, installed, and preserve their original overlays byte-for-byte.
-OpenCode remains deliberately unmanaged because its empty overlay would
-suppress Claude fallback. D-0020..D-0022 accept v0.5 hybrid provenance: random
-machine IDs, local activity/mutation/leases, portable worker+machine HANDOFF
-attribution, and unique HANDOFF revision lineage. Sibling revisions from one
-base provide offline collision detection and Git-ref merge guidance without a
-coordinator. T-0038..T-0041 and the v0.5 plan specify the work. Ledger checks
-pass.
+Prototype complete on `work/v0.5-worker-provenance`: machine identity plus
+local registry/CLI (T-0039), HANDOFF metadata plus doctor diagnostics
+(T-0040), capabilities plus reconciliation plus isolated CLI E2E (T-0041).
+Full gate green; floor and diff checks clean. No real-home mutation,
+tag, push, or publish performed.
 
 ## Next action
-Test v0.4.0 in fresh Claude and Codex sessions and append only observed issues
-to `notes/dogfooding.md`. Curate the OpenCode overlay before adopting it.
+Commit the prototype, then review per `notes/v0.5-adversarial-review.md`.
+Triage findings into TASKS before version bump or release gate.
 
 ## Gotchas
-Skill baseline remains 98 occurrences, 14 duplicate groups, three foreign
-owners, four known errors, and six warnings; do not fix them incidentally.
+PATH `statutor-doctor` is pipx v0.4.0 (stale); use worktree code for v0.5
+behavior. Skill baseline facts from v0.4 stand; do not fix incidentally.
 `_local/`, `assets/`, `notes/`, and the dogfood PDF are untracked human work.
-Active leases will be machine-local; v0.5 will not claim fleet-wide presence.
 
 ## Do not touch
 Embedded TEMPLATES dict; root `.pre-commit-hooks.yaml`; top-level plugin layout;

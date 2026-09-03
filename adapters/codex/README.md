@@ -88,3 +88,23 @@ release probe `python scripts/global_e2e.py --host codex --json` was verified
 against local Codex CLI 0.151.0 using `codex debug prompt-input` under a
 temporary profile. It performs no model or network request and never points
 Codex at the caller's real home.
+
+## Worker provenance (v0.5)
+
+Codex PreToolUse proves an **attempt** only — never a confirmed mutation
+and never completion. Nothing is auto-recorded: the hook path stays
+fail-open, and role/origin stay `unknown` (no host exposes them). The
+ingress is executor- or custom-run:
+
+- `statutor worker begin --harness codex` at session start,
+- `statutor worker record --harness codex --event attempt --session <id>`
+  from custom wiring only,
+- rewrite the shift-change note with `last_worker`/`last_machine`, a fresh
+  `handoff_id` superseding the baseline, then
+  `statutor worker complete --session <id>`.
+
+`statutor worker capabilities` reports the proven surfaces and gaps per
+host; `statutor worker compare <ref>` explains sibling handoffs read-only.
+Recording `--event mutation` under the `codex` harness is denied by the
+CLI — mutation requires a post-success surface Codex does not offer, and
+MCP tool ids never reach the hook at all.

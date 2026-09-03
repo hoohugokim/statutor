@@ -68,3 +68,23 @@ verified against local OpenCode 1.18.20. Under a temporary profile,
 `opencode debug skill --pure` resolved the deliberately duplicated fixture to
 one entry. The probe performs no model or network request and never points
 OpenCode at the caller's real home.
+
+## Worker provenance (v0.5)
+
+`tool.execute.before` proves an **attempt** only — never a confirmed
+mutation and never completion. Nothing is auto-recorded: the hook path
+stays fail-open and fast, and the hook input carries no stable session
+identity beyond `sessionID` (no primary/subagent distinction, so role
+stays `unknown`). The ingress is executor- or custom-run:
+
+- `statutor worker begin --harness opencode` at session start,
+- `statutor worker record --harness opencode --event attempt --session <id>`
+  from custom wiring only,
+- rewrite the shift-change note with `last_worker`/`last_machine`, a fresh
+  `handoff_id` superseding the baseline, then
+  `statutor worker complete --session <id>`.
+
+`statutor worker capabilities` reports the proven surfaces and gaps per
+host; `statutor worker compare <ref>` explains sibling handoffs read-only.
+Recording `--event mutation` under the `opencode` harness is denied by the
+CLI — mutation requires a post-success surface no host currently proves.

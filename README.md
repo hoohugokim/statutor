@@ -67,6 +67,15 @@ append-only/cap checks; see adapters/codex/). Residual gaps: MCP tools
 and Update-File section checks — so the git floor remains
 mandatory there.
 
+Worker provenance (v0.5, `statutor machine`/`statutor worker`): automatic
+hooks on every host prove an **attempt** only and record nothing by
+themselves — the hook path stays fail-open. Ingress is executor- or
+custom-run (`begin` → `record --event attempt` → attributed rewrite →
+`complete --session`); `--event mutation` under an automatic harness is
+denied. `worker capabilities` reports proven surfaces and gaps per host
+(verified against Claude Code 2.1.258, Codex CLI 0.152.1, OpenCode 1.18.20
+baselines); `worker compare <ref>` explains sibling handoffs read-only.
+
 ## Install
 
     pipx install statutor                # or: pip install -e .

@@ -1316,6 +1316,10 @@ TEMPLATES: dict[str, str] = {
 # HANDOFF
 
 last_verified: 1970-01-01 by `<command that proved the state below>`
+last_worker: unknown
+last_machine: unknown
+handoff_id: none
+supersedes: none
 
 ## Goal
 <the single objective of the current work stream>

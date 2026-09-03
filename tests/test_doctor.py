@@ -114,7 +114,11 @@ def _handoff_text(last_verified: str) -> str:
     return (
         "<!-- statutor: plane=state -->\n"
         "# HANDOFF\n\n"
-        f"last_verified: {last_verified} by `pytest`\n\n"
+        f"last_verified: {last_verified} by `pytest`\n"
+        "last_worker: unknown\n"
+        "last_machine: unknown\n"
+        "handoff_id: none\n"
+        "supersedes: none\n\n"
         "## Goal\ntest\n\n"
         "## Last verified state\ntest\n\n"
         "## Next action\ntest\n\n"

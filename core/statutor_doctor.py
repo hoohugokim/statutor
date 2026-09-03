@@ -42,6 +42,7 @@ import sys
 from datetime import date, datetime
 
 import statutor_core
+import statutor_worker
 
 SOFT_AGENTS_LINES = 120
 HANDOFF_STALE_DAYS = 3
@@ -140,6 +141,19 @@ def check(root: str) -> None:
                 f"{', '.join(missing_sections)} — a file on disk without these "
                 "bypassed the hook/floor (that's drift)."
             )
+
+        fields = statutor_worker.parse_handoff_fields(text)
+        if all(fields[name] is None
+               for name in statutor_worker.ATTRIBUTION_FIELDS):
+            warnings.append(
+                f"{handoff_filename} has no v0.5 worker attribution block "
+                "(last_worker/last_machine/handoff_id/supersedes) — pre-v0.5 "
+                "ledger, still valid; add it on the next rewrite and record "
+                "completion with `statutor worker complete --session <id>`."
+            )
+        else:
+            for problem in statutor_worker.validate_handoff_metadata(text):
+                errors.append(f"{handoff_filename}: {problem}")
 
     done_ids: set[str] = set()
     if os.path.isfile(p(tasks_filename)):

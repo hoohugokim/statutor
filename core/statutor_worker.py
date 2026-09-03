@@ -35,6 +35,95 @@ ROLES = ("primary", "subagent", "unknown")
 EVENTS = ("activity", "attempt", "mutation")
 BASES = ("completed", "mutation", "activity", "attempt")
 LEASE_TTL = timedelta(hours=24)
+
+# Proven lifecycle surfaces per harness (T-0041). Automatic policy hooks
+# (PreToolUse / tool.execute.before) prove an *attempt* only — never a
+# confirmed mutation and never completion. No host exposes a post-success
+# tool signal or a primary/subagent role fact, so role and origin stay
+# `unknown` unless a custom integration proves otherwise. Versions are the
+# last verified baselines, not live probes.
+CAPABILITIES: dict[str, dict[str, object]] = {
+    "claude": {
+        "verified_against": "Claude Code 2.1.258",
+        "attempt_surface": "PreToolUse hook (Write|Edit|Bash|apply_patch)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host session id when exposed, else generated",
+        "note": "Stop hook surfaces drift only; completion is executor-run "
+                "`worker complete`.",
+    },
+    "codex": {
+        "verified_against": "Codex CLI 0.152.1",
+        "attempt_surface": "PreToolUse hook (Bash|apply_patch matchers)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host session id when exposed, else generated",
+        "note": "Bash is the only fully interceptable tool; MCP tool ids "
+                "never reach the hook — the git floor covers them.",
+    },
+    "opencode": {
+        "verified_against": "OpenCode 1.18.20",
+        "attempt_surface": "tool.execute.before (write|edit|bash|apply_patch)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "plugin sessionID; no primary/subagent "
+                               "distinction is exposed",
+        "note": "Subagent tool calls fire the same hooks; server-namespaced "
+                "MCP tool ids never match the allowlist.",
+    },
+    "custom": {
+        "verified_against": "n/a (caller-proved)",
+        "attempt_surface": "`worker record` CLI ingress",
+        "proves": ["activity", "attempt", "mutation"],
+        "proves_mutation": True,
+        "proves_completion": False,
+        "role_signal": True,
+        "session_correlation": "caller-supplied --session id",
+        "note": "A custom harness may record mutation only through a "
+                "post-success surface it operates; Statutor takes the "
+                "caller's word for the evidence basis.",
+    },
+    "human": {
+        "verified_against": "n/a",
+        "attempt_surface": "direct CLI use",
+        "proves": ["activity", "attempt", "mutation"],
+        "proves_mutation": True,
+        "proves_completion": False,
+        "role_signal": True,
+        "session_correlation": "caller-supplied --session id",
+        "note": "Completion is still recorded only via `worker complete` "
+                "against a valid HANDOFF.",
+    },
+    "unknown": {
+        "verified_against": "n/a",
+        "attempt_surface": "none declared",
+        "proves": ["activity"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "generated session id",
+        "note": "Unknown means unproven, never a fallback guess.",
+    },
+}
+
+
+def host_capabilities(harness: str) -> dict[str, object]:
+    _check_harness(harness)
+    return {"harness": harness, **CAPABILITIES[harness]}
+
+
+def all_capabilities() -> dict[str, object]:
+    return {"schema_version": SCHEMA_VERSION, "scope": "machine-local",
+            "capabilities": {name: {"harness": name, **caps}
+                             for name, caps in CAPABILITIES.items()},
+            "note": "Static declarations of proven surfaces; automatic "
+                    "policy hooks prove attempt only on every host."}
 SESSION_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 HEX32_RE = re.compile(r"[0-9a-f]{32}")
 LABEL_MAX = 128
@@ -239,10 +328,61 @@ def _head_oid(cwd: str) -> str | None:
 # --------------------------------------------------------------------------
 
 _FIELD_RES = {
-    name: re.compile(rf"^{name}:\s*(\S.*?)\s*$", re.MULTILINE)
+    # NOTE: horizontal whitespace only around the value — `\s` would eat
+    # newlines and capture across lines on an empty-valued key.
+    name: re.compile(rf"^{name}:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
     for name in ("last_verified", "last_worker", "last_machine",
-                 "handoff_id", "supersedes")
+                 "last_machine_label", "handoff_id", "supersedes")
 }
+ATTRIBUTION_FIELDS = ("last_worker", "last_machine", "handoff_id",
+                      "supersedes")
+HANDOFF_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def validate_handoff_metadata(text: str) -> list[str]:
+    """Shape-check the optional v0.5 HANDOFF attribution block.
+
+    Returns diagnostics (empty = absent or valid). Absent fields carry
+    unknown/none semantics, so partial blocks are tolerated and old ledgers
+    without any block remain valid. Shared by the doctor and completion
+    validation so both judge the same shapes.
+    """
+    fields = parse_handoff_fields(text)
+    if all(fields[name] is None for name in ATTRIBUTION_FIELDS):
+        return []
+    problems: list[str] = []
+    if fields["last_worker"] is not None \
+            and fields["last_worker"] not in HARNESSES:
+        problems.append(
+            f"last_worker {fields['last_worker']!r} is not a stable harness "
+            f"id (expected one of {', '.join(HARNESSES)})")
+    if fields["last_machine"] is not None \
+            and fields["last_machine"] != "unknown" \
+            and not HEX32_RE.fullmatch(fields["last_machine"]):
+        problems.append(
+            f"last_machine {fields['last_machine']!r} is neither 'unknown' "
+            "nor a 32-hex machine id")
+    if fields["handoff_id"] is not None \
+            and fields["handoff_id"] != "none" \
+            and not HANDOFF_ID_RE.fullmatch(fields["handoff_id"]):
+        problems.append(
+            f"handoff_id {fields['handoff_id']!r} is neither 'none' nor a "
+            "token of [A-Za-z0-9._-]{1,128}")
+    if fields["supersedes"] is not None \
+            and fields["supersedes"] != "none":
+        names = [part.strip() for part in fields["supersedes"].split(",")]
+        if not names or any(not HANDOFF_ID_RE.fullmatch(part)
+                            for part in names):
+            problems.append(
+                f"supersedes {fields['supersedes']!r} is neither 'none' nor "
+                "a comma-separated list of handoff id tokens")
+    label = fields["last_machine_label"]
+    if label is not None and (not label.strip() or len(label) > LABEL_MAX):
+        problems.append("last_machine_label must be 1-128 chars when present")
+    elif label is None and re.search(r"^last_machine_label:\s*$", text,
+                                     re.MULTILINE):
+        problems.append("last_machine_label must be 1-128 chars when present")
+    return problems
 
 
 def parse_handoff_fields(text: str) -> dict[str, str | None]:
@@ -253,9 +393,9 @@ def parse_handoff_fields(text: str) -> dict[str, str | None]:
     return fields
 
 
-def read_handoff(ledger_root: str | None, cwd: str,
-                 ref: str | None = None) -> tuple[str | None, str | None]:
-    """Return (digest, handoff_id) for the worktree file or a git ref blob."""
+def _read_handoff_text(ledger_root: str | None, cwd: str,
+                       ref: str | None = None) -> tuple[str | None, str | None]:
+    """Return (digest, text) for the worktree file or a git ref blob."""
     if ref is None:
         if ledger_root is None:
             return None, None
@@ -266,11 +406,9 @@ def read_handoff(ledger_root: str | None, cwd: str,
             return None, None
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
         try:
-            text = content.decode("utf-8")
+            return digest, content.decode("utf-8")
         except UnicodeDecodeError:
             return digest, None
-        fields = parse_handoff_fields(text)
-        return digest, fields["handoff_id"]
     out = _git_optional(cwd, "show", f"{ref}:HANDOFF.md")
     # NOTE: bare `git show REF:HANDOFF.md` resolves from the repo root, but a
     # ledger may live in a subdirectory; fall back to the ledger-relative path.
@@ -284,8 +422,26 @@ def read_handoff(ledger_root: str | None, cwd: str,
     if out is None:
         return None, None
     raw = out.encode("utf-8")
-    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
-    return digest, parse_handoff_fields(out)["handoff_id"]
+    return "sha256:" + hashlib.sha256(raw).hexdigest(), out
+
+
+def read_handoff(ledger_root: str | None, cwd: str,
+                 ref: str | None = None) -> tuple[str | None, str | None]:
+    """Return (digest, handoff_id) for the worktree file or a git ref blob."""
+    digest, text = _read_handoff_text(ledger_root, cwd, ref)
+    if digest is None or text is None:
+        return digest, None
+    return digest, parse_handoff_fields(text)["handoff_id"]
+
+
+def _attribution_summary(text: str | None) -> dict[str, str]:
+    """Portable worker/machine attribution with unknown defaults."""
+    fields = parse_handoff_fields(text) if text is not None else {}
+    return {
+        "last_worker": str(fields.get("last_worker") or "unknown"),
+        "last_machine": str(fields.get("last_machine") or "unknown"),
+        "handoff_id": str(fields.get("handoff_id") or "none"),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -583,7 +739,9 @@ def worker_begin(state_root: Path, cwd: str, *, harness: str,
             "derivation": derivation, "worktree_id": wt_id,
             "worktree_root": wt_root, "ledger_root": ledger,
             "session": session,
-            "capability_note": "begin proves activity only, never mutation"}
+            "capabilities": host_capabilities(harness),
+            "capability_note": "begin proves activity only, never mutation; "
+                               "see `worker capabilities` for proven surfaces"}
 
 
 def _touch(registry: dict[str, object], wt_id: str, wt_root: str, *,
@@ -750,6 +908,16 @@ def worker_complete(state_root: Path, cwd: str, *,
     if current_digest is None:
         raise WorkerError("completion requires a HANDOFF.md in the ledger")
     current_id = current_handoff if current_handoff else "none"
+    ledger_path = Path(ledger) / "HANDOFF.md"
+    try:
+        handoff_text = ledger_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise WorkerError(f"cannot read HANDOFF.md: {exc}") from exc
+    shape_problems = validate_handoff_metadata(handoff_text)
+    if shape_problems:
+        raise WorkerError("HANDOFF attribution block is malformed: "
+                          + "; ".join(shape_problems))
+    handoff_fields = parse_handoff_fields(handoff_text)
     with _ProjectLock(_project_dir(state_root, project_id)):
         registry, expected = _load_or_init(state_root, project_id, derivation,
                                            display)
@@ -766,27 +934,51 @@ def worker_complete(state_root: Path, cwd: str, *,
         prior = latest.get("completed")
         prior_id = str(prior.get("handoff_id", "none")) if isinstance(
             prior, dict) else "none"
-        if prior_id != baseline:
+        supersedes = handoff_fields.get("supersedes")
+        names = {part.strip() for part in (supersedes or "").split(",")
+                 if part.strip()} if supersedes else set()
+        fresh = current_id != "none" and current_id != baseline \
+            and current_id != prior_id
+        reconciled: list[str] | None = None
+        if prior_id == baseline or prior_id == "none":
+            # Normal path, including first completion from an attributed
+            # baseline: no local session completed ahead of us.
+            pass
+        elif baseline in names and prior_id in names and fresh:
+            # Same-machine reconciliation: the executor absorbed both the
+            # session baseline and the locally completed sibling into one
+            # fresh HANDOFF. Only this restores a linear current state.
+            reconciled = sorted({baseline, prior_id} - {"none"})
+        else:
             raise WorkerError(
                 "completion CAS failed: another local session completed "
                 f"first (baseline {baseline}, current completed {prior_id} "
                 f"by {prior.get('harness')}/{prior.get('machine_id')}/"
-                f"{prior.get('session_id')}); reconcile before completing")
-        if baseline != "none":
+                f"{prior.get('session_id')}); reconcile both ids into one "
+                "fresh HANDOFF naming them in supersedes before completing")
+        claimed_machine = handoff_fields.get("last_machine")
+        if claimed_machine not in (None, "unknown") \
+                and claimed_machine != machine["machine_id"]:
+            raise WorkerError(
+                "HANDOFF last_machine "
+                f"{claimed_machine!r} does not match this machine "
+                f"({machine['machine_id']}); the rewrite attributes another "
+                "machine — fix the attribution before completing")
+        claimed_worker = handoff_fields.get("last_worker")
+        session_harness = str(session.get("harness", "unknown"))
+        if claimed_worker not in (None, "unknown") \
+                and claimed_worker != session_harness:
+            raise WorkerError(
+                f"HANDOFF last_worker {claimed_worker!r} does not match the "
+                f"session harness ({session_harness}); fix the attribution "
+                "before completing")
+        if baseline != "none" and reconciled is None:
             if current_id == baseline:
                 raise WorkerError(
                     "completion requires a fresh handoff_id distinct from "
                     f"the session baseline ({baseline})")
             # Verify the rewritten HANDOFF names its baseline. Tolerant of
             # legacy files without supersedes only when baseline is none.
-            ledger_path = Path(ledger) / "HANDOFF.md"
-            try:
-                text = ledger_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                raise WorkerError(f"cannot read HANDOFF.md: {exc}") from exc
-            supersedes = parse_handoff_fields(text).get("supersedes")
-            names = [part.strip() for part in (supersedes or "").split(",")
-                     if part.strip()] if supersedes else []
             if baseline not in names:
                 raise WorkerError(
                     f"completion requires supersedes naming {baseline}; "
@@ -815,6 +1007,7 @@ def worker_complete(state_root: Path, cwd: str, *,
     return {"schema_version": SCHEMA_VERSION, "scope": "machine-local",
             "operation": "worker-complete", "project_id": project_id,
             "worktree_id": wt_id, "record": record,
+            "reconciled": reconciled,
             "handoff_digest": current_digest}
 
 
@@ -827,9 +1020,15 @@ def worker_compare(state_root: Path, cwd: str,
     if base is None:
         raise WorkerError(f"cannot resolve merge base for {ref} "
                           "(make the ref available locally first)")
-    ours_digest, ours_id = read_handoff(ledger, cwd)
-    base_digest, base_id = read_handoff(ledger, cwd, ref=base)
-    theirs_digest, theirs_id = read_handoff(ledger, cwd, ref=ref)
+    ours_digest, ours_text = _read_handoff_text(ledger, cwd)
+    base_digest, base_text = _read_handoff_text(ledger, cwd, ref=base)
+    theirs_digest, theirs_text = _read_handoff_text(ledger, cwd, ref=ref)
+    ours_id = parse_handoff_fields(ours_text)["handoff_id"] \
+        if ours_text is not None else None
+    base_id = parse_handoff_fields(base_text)["handoff_id"] \
+        if base_text is not None else None
+    theirs_id = parse_handoff_fields(theirs_text)["handoff_id"] \
+        if theirs_text is not None else None
     norm = lambda value: value if value else "none"
     base_n, ours_n, theirs_n = norm(base_id), norm(ours_id), norm(theirs_id)
     if ours_n == theirs_n:
@@ -843,15 +1042,42 @@ def worker_compare(state_root: Path, cwd: str,
     required = sorted({value for value in (ours_n, theirs_n)
                        if value != "none"})
     _ = state_root  # local registry is not consulted by offline comparison
+    if classification == "sibling":
+        guidance = [
+            "Make the other ref available locally first (fetch/pull); "
+            "Statutor never touches the network.",
+            "Resolve the substantive HANDOFF state by hand, then rewrite "
+            "HANDOFF.md fresh with a new random handoff_id.",
+            f"Name every id in supersedes: {', '.join(required)}.",
+            "Attribute the rewrite (last_worker/last_machine), verify it, "
+            "then record it with `statutor worker complete --session <id>` "
+            "from a session started on the reconciled base.",
+        ]
+    elif classification == "stale":
+        guidance = [
+            f"Advance to {ref}: adopt its HANDOFF state, then rewrite with "
+            "a fresh handoff_id superseding "
+            f"{theirs_n} (and {base_n} when distinct).",
+        ]
+    elif classification == "successor":
+        guidance = ["Current HANDOFF already supersedes the ref; no "
+                    "reconciliation needed."]
+    else:
+        guidance = ["Both sides report the same handoff_id; no "
+                    "reconciliation needed."]
     return {"schema_version": SCHEMA_VERSION, "scope": "portable-handoff",
             "operation": "worker-compare", "ref": ref, "merge_base": base,
-            "base": {"handoff_id": base_n, "digest": base_digest},
-            "ours": {"handoff_id": ours_n, "digest": ours_digest},
-            "theirs": {"handoff_id": theirs_n, "digest": theirs_digest},
+            "base": {"digest": base_digest,
+                     **_attribution_summary(base_text)},
+            "ours": {"digest": ours_digest,
+                     **_attribution_summary(ours_text)},
+            "theirs": {"digest": theirs_digest,
+                       **_attribution_summary(theirs_text)},
             "classification": classification,
             "reconciliation_must_supersede": required,
+            "reconciliation_guidance": guidance,
             "note": "offline comparison only; Statutor never fetches, "
-                    "merges, or rewrites HANDOFF content"}
+                    "merges, rewrites HANDOFF content, or selects a winner"}
 
 
 # --------------------------------------------------------------------------
@@ -971,6 +1197,11 @@ def worker_cli(argv: list[str]) -> int:
     compare.add_argument("ref")
     compare.add_argument("--cwd")
     compare.add_argument("--json", action="store_true")
+    capabilities = sub.add_parser("capabilities")
+    capabilities.add_argument("--home")
+    capabilities.add_argument("--config-root")
+    capabilities.add_argument("--state-root")
+    capabilities.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     roots = _roots(args)
     cwd = getattr(args, "cwd", None) or os.getcwd()
@@ -996,8 +1227,10 @@ def worker_cli(argv: list[str]) -> int:
         elif args.command == "complete":
             result = worker_complete(Path(roots.state_root), cwd,
                                      session_id=args.session)
-        else:
+        elif args.command == "compare":
             result = worker_compare(Path(roots.state_root), cwd, ref=args.ref)
+        else:
+            result = all_capabilities()
     except (WorkerError, substrate.GlobalError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

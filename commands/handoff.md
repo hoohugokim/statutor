@@ -10,8 +10,11 @@ Rewrite HANDOFF.md now, following the policy exactly:
 - If anything settled this session belongs in DECISIONS.md, append the D-record first, then reference its id here.
 - If this session is tracked (`statutor worker begin` ran at session start):
   set `last_worker`/`last_machine` to the session values, mint a fresh
-  `handoff_id`, set `supersedes` to the baseline id, then run
-  `statutor worker complete --session <id>`. Hooks never rewrite this file.
+  `handoff_id` via `statutor worker new-id`, set `supersedes` to the
+  baseline id, then run `statutor worker complete --session <id>`. Hooks
+  never rewrite this file. Attribute to the session writing this note;
+  name subagent run ids (`wf_...`) or remote hosts/branches in the body
+  as provenance pointers.
 - If reconciling divergent handoffs: run `statutor worker compare <ref>`
   first and name every required id in `supersedes`.
 - Ledgers without the v0.5 block remain valid — add it opportunistically,

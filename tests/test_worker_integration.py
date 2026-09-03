@@ -260,3 +260,104 @@ def test_cli_record_outside_ledger_denied(
                               "--event", "attempt", "--json"])
     capsys.readouterr()
     assert code == 1
+
+
+# --------------------------------------------------------------------------
+# two fake machines, one git history (plan acceptance: pulled HANDOFF names
+# the remote completing machine without importing its local state)
+# --------------------------------------------------------------------------
+
+def test_two_machines_share_history_without_importing_state(
+        tmp_path: Path) -> None:
+    state_a = _state(tmp_path, "state-a")
+    state_b = _state(tmp_path, "state-b")
+    machine_a, _ = worker.ensure_machine(state_a)
+    machine_b, _ = worker.ensure_machine(state_b)
+    assert machine_a["machine_id"] != machine_b["machine_id"]
+    repo = _repo(tmp_path, "repo", _handoff(
+        "last_worker: unknown\nlast_machine: unknown\n"
+        "handoff_id: none\nsupersedes: none\n"))
+
+    begun_a = worker.worker_begin(state_a, str(repo), harness="claude")
+    (repo / "HANDOFF.md").write_text(_handoff(ATTRIBUTED.format(
+        mid=machine_a["machine_id"], hid="hA", sup="none")))
+    worker.worker_complete(state_a, str(repo),
+                           session_id=begun_a["session"]["session_id"])
+
+    # Machine B sees the same history: the pulled HANDOFF names A, but B's
+    # local registry holds none of A's activity.
+    assert worker.parse_handoff_fields(
+        (repo / "HANDOFF.md").read_text())["last_machine"] == \
+        machine_a["machine_id"]
+    begun_b = worker.worker_begin(state_b, str(repo), harness="codex")
+    assert begun_b["session"]["baseline_handoff_id"] == "hA"
+    assert worker.worker_show(
+        state_b, str(repo), basis="completed")["record"] is None
+    (repo / "HANDOFF.md").write_text(_handoff(ATTRIBUTED.format(
+        mid=machine_b["machine_id"], hid="hB", sup="hA").replace(
+        "last_worker: claude", "last_worker: codex")))
+    done_b = worker.worker_complete(state_b, str(repo),
+                                    session_id=begun_b["session"]["session_id"])
+    assert done_b["record"]["machine_id"] == machine_b["machine_id"]
+    project_id, _, _ = worker._resolve_project(str(repo))
+    registry_b = worker._registry_path(state_b, project_id).read_text()
+    assert machine_a["machine_id"] not in registry_b
+    registry_a = worker._registry_path(state_a, project_id).read_text()
+    assert machine_b["machine_id"] not in registry_a
+
+
+# --------------------------------------------------------------------------
+# lock contention: busy path is deterministic, never corrupts
+# --------------------------------------------------------------------------
+
+def test_project_lock_busy_path(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(
+        "last_worker: unknown\nlast_machine: unknown\n"
+        "handoff_id: none\nsupersedes: none\n"))
+    project_id, derivation, display = worker._resolve_project(str(repo))
+    directory = worker._project_dir(state, project_id)
+    with worker._ProjectLock(directory):
+        with pytest.raises(worker.WorkerError, match="busy"):
+            with worker._ProjectLock(directory):
+                pass  # pragma: no cover
+        with pytest.raises(worker.WorkerError, match="busy"):
+            worker.worker_begin(state, str(repo), harness="claude")
+    begun = worker.worker_begin(state, str(repo), harness="claude")
+    assert begun["session"]["status"] == "active"
+
+
+def test_held_lock_blocks_then_releases_across_threads(
+        tmp_path: Path) -> None:
+    import threading
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(
+        "last_worker: unknown\nlast_machine: unknown\n"
+        "handoff_id: none\nsupersedes: none\n"))
+    project_id, _, _ = worker._resolve_project(str(repo))
+    directory = worker._project_dir(state, project_id)
+    entered = threading.Event()
+    release = threading.Event()
+    outcomes: list[str] = []
+
+    def holder() -> None:
+        with worker._ProjectLock(directory):
+            entered.set()
+            assert release.wait(timeout=30)
+        worker.worker_begin(state, str(repo), harness="human")
+
+    thread = threading.Thread(target=holder)
+    thread.start()
+    assert entered.wait(timeout=30)
+    try:
+        worker.worker_begin(state, str(repo), harness="claude")
+        outcomes.append("unexpected-success")
+    except worker.WorkerError as exc:
+        outcomes.append("busy" if "busy" in str(exc) else f"other: {exc}")
+    finally:
+        release.set()
+    thread.join(timeout=30)
+    assert outcomes == ["busy"]
+    registry = worker.validate_registry(worker.substrate.load_json(
+        worker._registry_path(state, project_id)))
+    assert len(registry["sessions"]) == 1

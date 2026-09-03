@@ -278,6 +278,13 @@ def rotate_machine(state_root: Path, *, confirm: bool = False) -> dict[str, obje
 # --------------------------------------------------------------------------
 
 def _git_optional(cwd: str, *args: str) -> str | None:
+    raw = _git_bytes_optional(cwd, *args)
+    if raw is None:
+        return None
+    return raw.decode("utf-8", "replace").strip()
+
+
+def _git_bytes_optional(cwd: str, *args: str) -> bytes | None:
     try:
         result = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
                                 check=False, timeout=15)
@@ -285,7 +292,7 @@ def _git_optional(cwd: str, *args: str) -> str | None:
         return None
     if result.returncode != 0:
         return None
-    return result.stdout.decode("utf-8", "replace").strip()
+    return result.stdout
 
 
 def _resolve_project(cwd: str) -> tuple[str, str, str]:
@@ -409,20 +416,26 @@ def _read_handoff_text(ledger_root: str | None, cwd: str,
             return digest, content.decode("utf-8")
         except UnicodeDecodeError:
             return digest, None
-    out = _git_optional(cwd, "show", f"{ref}:HANDOFF.md")
+    raw = _git_bytes_optional(cwd, "show", f"{ref}:HANDOFF.md")
     # NOTE: bare `git show REF:HANDOFF.md` resolves from the repo root, but a
     # ledger may live in a subdirectory; fall back to the ledger-relative path.
-    if out is None and ledger_root is not None:
+    if raw is None and ledger_root is not None:
         try:
             rel = os.path.relpath(os.path.join(ledger_root, "HANDOFF.md"),
                                   _resolve_worktree(cwd))
         except ValueError:
             rel = "HANDOFF.md"
-        out = _git_optional(cwd, "show", f"{ref}:{rel}")
-    if out is None:
+        raw = _git_bytes_optional(cwd, "show", f"{ref}:{rel}")
+    if raw is None:
         return None, None
-    raw = out.encode("utf-8")
-    return "sha256:" + hashlib.sha256(raw).hexdigest(), out
+    # Hash the exact blob bytes so worktree and ref digests agree even for
+    # non-UTF-8 files; parse from a strict decode (None when undecodable,
+    # mirroring the worktree branch above).
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    try:
+        return digest, raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return digest, None
 
 
 def read_handoff(ledger_root: str | None, cwd: str,
@@ -434,12 +447,17 @@ def read_handoff(ledger_root: str | None, cwd: str,
     return digest, parse_handoff_fields(text)["handoff_id"]
 
 
-def _attribution_summary(text: str | None) -> dict[str, str]:
-    """Portable worker/machine attribution with unknown defaults."""
+def _attribution_summary(text: str | None) -> dict[str, object]:
+    """Portable worker/machine attribution with unknown defaults.
+
+    The label is caller-controlled display metadata: surfaced as data (never
+    rendered where an id is expected), null when the block omits it.
+    """
     fields = parse_handoff_fields(text) if text is not None else {}
     return {
         "last_worker": str(fields.get("last_worker") or "unknown"),
         "last_machine": str(fields.get("last_machine") or "unknown"),
+        "last_machine_label": fields.get("last_machine_label"),
         "handoff_id": str(fields.get("handoff_id") or "none"),
     }
 
@@ -570,7 +588,13 @@ def _ensure_worktree(registry: dict[str, object], wt_id: str,
 
 
 class _ProjectLock:
-    """Bounded mkdir lock scoped to one project directory."""
+    """Bounded mkdir lock scoped to one project directory.
+
+    Like substrate.StateLock, stale locks (kill -9 between acquire and
+    release) require explicit recovery: remove `<project-dir>/.worker.lock`
+    (rmdir fails while held, so a present lock is either live or stale —
+    confirm no statutor process is running before removing).
+    """
 
     def __init__(self, project_dir: Path):
         self.path = project_dir / ".worker.lock"
@@ -713,6 +737,9 @@ def worker_begin(state_root: Path, cwd: str, *, harness: str,
         "machine_label": machine["label"], "worktree_id": wt_id,
         "worktree_root": wt_root, "started_at": _iso(now),
         "expires_at": _iso(now + LEASE_TTL), "baseline_head": head,
+        # Diagnostic only: CAS binds handoff_id lineage (plus supersedes,
+        # machine, worker), never the digest — every legitimate rewrite
+        # changes the body, so digest equality would reject valid work.
         "baseline_handoff_digest": digest,
         "baseline_handoff_id": handoff_id if handoff_id else "none",
         "status": "active",
@@ -1013,7 +1040,10 @@ def worker_complete(state_root: Path, cwd: str, *,
 
 def worker_compare(state_root: Path, cwd: str,
                    *, ref: str) -> dict[str, object]:
-    if not ref or re.search(r"[\s~^:?*\[\\]", ref):
+    # No legitimate ref starts with `-`; without this guard the value below
+    # reaches `git merge-base`/`git show` argv as an option flag. Git fails
+    # safe today, but comparison must never hand option-shaped input to git.
+    if not ref or ref.startswith("-") or re.search(r"[\s~^:?*\[\\]", ref):
         raise WorkerError("invalid git ref")
     ledger = _require_ledger(cwd)
     base = _git_optional(cwd, "merge-base", "HEAD", ref)
@@ -1139,6 +1169,16 @@ def machine_cli(argv: list[str]) -> int:
 
 
 def worker_cli(argv: list[str]) -> int:
+    # CLI-to-plan traceability (plans/v0.5-worker-provenance.md): the contract
+    # block names each command; `[metadata]` on `record` covers --role,
+    # --origin-harness, and --session (vocabulary + session baselines live in
+    # the Vocabulary/Local-registry sections); `complete --session` and
+    # `compare REF` match the contract verbatim; `capabilities` reports the
+    # schema's capability metadata (T-0041 "capability reporting"); `new-id`
+    # mints the fresh random ids the portable-completion section requires;
+    # --cwd/--home/--config-root/--state-root are hermetic-test plumbing,
+    # same pattern as the global CLI. `machine rotate --confirm` is the
+    # plan's "explicit confirmation" before rotation.
     import argparse
     parser = argparse.ArgumentParser(prog="statutor worker")
     parser.add_argument("--home")
@@ -1202,6 +1242,10 @@ def worker_cli(argv: list[str]) -> int:
     capabilities.add_argument("--config-root")
     capabilities.add_argument("--state-root")
     capabilities.add_argument("--json", action="store_true")
+    new_id = sub.add_parser(
+        "new-id",
+        help="mint a fresh random handoff id for a HANDOFF rewrite")
+    new_id.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     roots = _roots(args)
     cwd = getattr(args, "cwd", None) or os.getcwd()
@@ -1229,8 +1273,16 @@ def worker_cli(argv: list[str]) -> int:
                                      session_id=args.session)
         elif args.command == "compare":
             result = worker_compare(Path(roots.state_root), cwd, ref=args.ref)
-        else:
+        elif args.command == "capabilities":
             result = all_capabilities()
+        else:
+            token = secrets.token_hex(16)
+            if getattr(args, "json", False):
+                result = {"schema_version": SCHEMA_VERSION,
+                          "handoff_id": token}
+            else:
+                print(token)
+                return 0
     except (WorkerError, substrate.GlobalError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

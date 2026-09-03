@@ -535,6 +535,24 @@ def s59_state_binary_denied(root: Path) -> None:
     git(root, "add", "TASKS.md")
 
 
+def s60_tmp_swap_onto_policy_denied(root: Path) -> None:
+    """Attacker stages a weakened policy by swapping an ungoverned temp file
+    onto `.statutor.yaml` (the in-loop bash guard only sees the benign
+    `.tmp` name; git presents the swap as modify+delete). The floor must
+    judge the resulting policy bytes and deny the unapproved trust-root
+    transition with no receipt present."""
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    # Near-identical bytes so rename detection links the swap; the guard
+    # disablement is an explicit weakening class (D-0015).
+    (root / "evil.tmp").write_text(
+        TRUST_POLICY.replace("bash_guard: true", "bash_guard: false"),
+        encoding="utf-8")
+    git(root, "add", ".statutor.yaml", "evil.tmp")
+    git(root, "commit", "-q", "-m", "roots")
+    git(root, "mv", "-f", "evil.tmp", ".statutor.yaml")
+
+
 SCENARIOS = {
     name: fn
     for name, fn in sorted(globals().items())

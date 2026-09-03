@@ -3,6 +3,7 @@ completion validation, and read-only reconciliation guidance."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import date
@@ -223,3 +224,61 @@ def test_compare_reports_attribution_and_guidance(tmp_path: Path) -> None:
     assert any("hA" in step and "hB" in step
                for step in result["reconciliation_guidance"])
     assert "never" in result["note"]
+
+
+def test_compare_rejects_leading_dash_ref(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(TODAY, VALID_BLOCK))
+    with pytest.raises(worker.WorkerError, match="invalid git ref"):
+        worker.worker_compare(state, str(repo), ref="--output=/tmp/x")
+    with pytest.raises(worker.WorkerError, match="invalid git ref"):
+        worker.worker_compare(state, str(repo), ref="-sibling")
+
+
+def test_compare_reports_machine_label(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(
+        TODAY, "last_worker: claude\nlast_machine: unknown\n"
+        "last_machine_label: field-laptop\n"
+        "handoff_id: h0\nsupersedes: none\n"))
+    _git(repo, "checkout", "-qb", "sibling")
+    _git(repo, "checkout", "-q", "-")
+    result = worker.worker_compare(state, str(repo), ref="sibling")
+    assert result["ours"]["last_machine_label"] == "field-laptop"
+    assert result["theirs"]["last_machine_label"] == "field-laptop"
+    plain = worker._attribution_summary(None)
+    assert plain["last_machine_label"] is None
+
+
+def test_worker_new_id_mints_opaque_token(
+        tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    import re
+    assert worker.worker_cli(["new-id"]) == 0
+    first = capsys.readouterr().out.strip()
+    assert re.fullmatch(r"[0-9a-f]{32}", first)
+    assert worker.worker_cli(["new-id", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert re.fullmatch(r"[0-9a-f]{32}", payload["handoff_id"])
+    assert payload["handoff_id"] != first
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(TODAY, VALID_BLOCK))
+    with pytest.raises(worker.WorkerError, match="invalid git ref"):
+        worker.worker_compare(state, str(repo), ref="--output=/tmp/x")
+    with pytest.raises(worker.WorkerError, match="invalid git ref"):
+        worker.worker_compare(state, str(repo), ref="-sibling")
+
+
+def test_compare_digests_agree_on_non_utf8_blob(tmp_path: Path) -> None:
+    import hashlib
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo", _handoff(TODAY, VALID_BLOCK))
+    raw = b"# HANDOFF\n\nlast_verified: 2026-09-03 by t\n\xff\xfe binary\n"
+    (repo / "HANDOFF.md").write_bytes(raw)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "non-utf8 handoff")
+    _git(repo, "checkout", "-qb", "sibling")
+    _git(repo, "checkout", "-q", "-")
+    expected = "sha256:" + hashlib.sha256(raw).hexdigest()
+    result = worker.worker_compare(state, str(repo), ref="sibling")
+    assert result["ours"]["digest"] == expected
+    assert result["theirs"]["digest"] == expected

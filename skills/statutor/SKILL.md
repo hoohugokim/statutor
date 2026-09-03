@@ -33,6 +33,10 @@ Non-negotiable rules:
    prior; a reconciliation names every sibling id. Record completion with
    `statutor worker complete --session <id>`; compare refs read-only with
    `statutor worker compare <ref>` — Statutor never merges HANDOFF for you.
+   The block records authorship: the completing session should be the
+   ledger-writing (usually orchestrating) session on the machine that wrote
+   the note. Subagent run ids and remote hosts/branches belong as pointers
+   in the note body, not in the schema — the schema stays four fields.
 3. **DECISIONS.md is append-only.** Micro-ADRs (`## D-NNNN`, Status/Context/
    Decision/Consequences). Supersede by appending — never edit. Read it
    before re-opening any settled question.

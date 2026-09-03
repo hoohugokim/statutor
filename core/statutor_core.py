@@ -27,6 +27,8 @@ Entry modes (all share the same validate() core):
                           exit 1 on violations.
   statutor init [DIR]     Scaffold governed files from embedded templates.
   statutor global ...     Opt-in global instruction and skill projection manager.
+  statutor machine ...    Random machine identity (mode 0600, rotation).
+  statutor worker ...     Machine-local worker provenance (begin/record/show/active/complete/compare).
 
 No third-party dependencies. The policy format is a deterministic YAML subset;
 PyYAML is optional for ancillary tooling, never required by the trust floor.
@@ -1420,6 +1422,12 @@ def main() -> None:
     if mode == "global":
         import statutor_global_cli
         sys.exit(statutor_global_cli.main(argv[1:]))
+    if mode == "machine":
+        import statutor_worker
+        sys.exit(statutor_worker.machine_cli(argv[1:]))
+    if mode == "worker":
+        import statutor_worker
+        sys.exit(statutor_worker.worker_cli(argv[1:]))
     print(__doc__)
     sys.exit(64)
 

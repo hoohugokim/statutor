@@ -89,7 +89,7 @@ baselines); `worker compare <ref>` explains sibling handoffs read-only.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.4.0
+        rev: v0.5.0
         hooks: [{id: statutor}]
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed

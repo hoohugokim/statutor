@@ -125,6 +125,7 @@ def _audit_sdist(path: Path, version: str) -> None:
         "core/statutor_global_cli.py",
         "core/statutor_global_status.py",
         "core/statutor_skills.py",
+        "core/statutor_worker.py",
     }
     seen: set[str] = set()
     private_markers = (b"/Users/", b"/home/", b"C:\\Users\\")
@@ -161,6 +162,7 @@ def _audit_wheel(path: Path, version: str) -> None:
         "statutor_global_cli.py",
         "statutor_global_status.py",
         "statutor_skills.py",
+        "statutor_worker.py",
         f"{dist}/METADATA",
         f"{dist}/RECORD",
         f"{dist}/WHEEL",

@@ -2,20 +2,16 @@
 # ROADMAP
 
 ## Current milestone <!-- agent-visible -->
-v0.4.0 dogfood: exercise the published portable global instruction and Agent
-Skill layer in fresh Claude Code and Codex sessions before adopting OpenCode.
-Capture only real findings in `notes/dogfooding.md`; corrective patches must
-preserve D-0018's explicit adoption, CAS, backup, and no-clobber guarantees.
-Runbook: `plans/v0.4-dogfood.md`.
+v0.5.0 live on PyPI: exercise worker provenance in real sessions — begin,
+attributed rewrite, complete — refresh host pins (Claude 2.1.261 and Codex
+0.153.4 observed against 2.1.258 / 0.152.1 pins), and file only real
+findings as TASKS. Runbook: `notes/v0.5-release-guide.md`.
 
 ## Next milestone (human context, agents ignore)
-v0.5 "worker provenance" (T-0038..T-0041): answer which harness and machine
-most recently worked in a governed project without conflating activity,
-attempted work, confirmed mutation, and completed handoff. Combine a private
-machine-local activity/lease registry with portable, executor-written HANDOFF
-attribution and offline collision lineage; expose stable scoped queries,
-Git-ref merge guidance, and host capability gaps without network coordination.
-Execution spec: `plans/v0.5-worker-provenance.md`.
+Undecided. Candidates: live-binary E2E automation, host role-signal watch
+(revisit the Q5 guard if a host exposes roles), true concurrent-writer
+stress test. D-0023 declines a universal skill library; v0.5 execution
+spec stays at `plans/v0.5-worker-provenance.md` for reference.
 
 ## Later (human context, agents ignore)
 - A real server-side pre-receive/ref-range validator; `staged` mode cannot inspect a bare repo or pushed refs, and D-0014's staged-only scope must be superseded first

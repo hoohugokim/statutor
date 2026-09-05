@@ -7,6 +7,10 @@ description: Typed project-ledger discipline for agentic repos. Use this skill w
 
 Repo instruction files are a state machine of typed registers, each with a
 mutation policy and exactly one writer — enforced by hooks, not by prose.
+This skill orients and routes: it fires on ledger-related intent so the
+session loads the framework. Authoritative per-trigger instruction lives in
+`commands/`, enforcement in the kernel hooks and git floor — where this file
+and those disagree, those win.
 
 ## The four planes
 

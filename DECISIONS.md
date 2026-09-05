@@ -145,3 +145,9 @@
 **Decision:** Every attributed HANDOFF completion has a random `handoff_id` and one or more `supersedes` IDs. Session start records the baseline ID locally; completion validates compare-and-swap lineage. Concurrent machines starting from the same ID create distinct sibling revisions, and a reconciliation HANDOFF explicitly supersedes both. Missing lineage remains backward-compatible during v0.5 adoption.
 **Decision:** Read-only comparison against a caller-supplied local Git ref reports base/ours/theirs worker and machine attribution plus the IDs a reconciliation must supersede. Statutor performs no fetch, pull, push, merge, automatic HANDOFF rewrite, or winner selection. Unique metadata lines intentionally make ordinary Git merging conservative when sibling handoffs collide.
 **Consequences:** v0.5 provides collision detection and deterministic merge guidance after refs are locally available, while same-machine leases provide an earlier warning. Networked presence and remote coordination remain non-goals.
+
+## D-0023 — No universal skill library; one routing skill only
+**Status:** accepted
+**Context:** Proposal to bundle Clawd/Codex/OpenCode-wide universal shared skills, including per-plane governance skills, as part of Statutor.
+**Decision:** Decline the library. `skills/statutor` stays the sole bundled skill with a routing job (activation on ledger-related intent); per-trigger instruction lives in `commands/`, enforcement in the kernel hooks and git floor. Governance content duplicating enforced rules in unenforced prose recreates the instruction decay D-0001 was created to kill, and skill discovery is the least reliable layer (Claude exposes no offline personal-skill inventory, T-0036).
+**Consequences:** Future skill proposals must show a non-duplicative job, pass three-host discovery verification, and keep general-purpose skills outside this repo.

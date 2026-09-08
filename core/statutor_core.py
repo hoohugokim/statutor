@@ -787,6 +787,13 @@ def _automatic_reason(tool: str, payload: dict, cwd: str) -> str | None:
     return None
 
 def run_hook() -> int:
+    if sys.stdin.isatty():
+        # A TTY means a human ran the hook with no piped event (harnesses
+        # always pipe JSON). Fail fast with usage instead of blocking on
+        # stdin forever; fail-open applies to hook *events*, not misuse.
+        print("statutor hook expects piped hook JSON on stdin; "
+              "run `statutor --help` for modes.", file=sys.stderr)
+        return 64
     try:
         event = json.load(sys.stdin)
         tool = event.get("tool_name", "")
@@ -1412,7 +1419,12 @@ def run_init(target: str) -> int:
 
 def main() -> None:
     argv = sys.argv[1:]
-    mode = argv[0] if argv else "hook"
+    if not argv or argv[0] in ("--help", "-h"):
+        # Bare invocation must never fall through to hook mode (which blocks
+        # on stdin); print usage instead. --help exits clean, bare exits 64.
+        print(__doc__)
+        sys.exit(0 if argv else 64)
+    mode = argv[0]
     if mode in ("hook", "--claude-hook"):
         sys.exit(run_hook())
     if mode == "check":

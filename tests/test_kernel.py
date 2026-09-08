@@ -1046,6 +1046,35 @@ def test_hook_fails_open_on_empty_stdin():
     assert result.stdout == ""
 
 
+def test_bare_invocation_prints_usage_without_reading_stdin():
+    result = run_kernel([], input_str="")
+    assert result.returncode == 64
+    assert "statutor hook" in result.stdout
+
+
+def test_help_flag_exits_clean():
+    result = run_kernel(["--help"])
+    assert result.returncode == 0
+    assert "statutor hook" in result.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires a POSIX pty")
+def test_hook_tty_stdin_fails_fast_instead_of_stalling():
+    """A human running `statutor hook` at a terminal must get usage, not a
+    process blocked on stdin forever (would TimeoutExpired pre-fix)."""
+    import pty
+    primary, replica = pty.openpty()
+    try:
+        result = subprocess.run(
+            [sys.executable, str(KERNEL), "hook"], stdin=replica,
+            capture_output=True, text=True, timeout=15)
+    finally:
+        os.close(primary)
+        os.close(replica)
+    assert result.returncode == 64
+    assert "stdin" in result.stderr
+
+
 def test_hook_fails_open_on_non_object_json():
     result = run_kernel(["hook"], input_str="[]")
     assert result.returncode == 0
@@ -1091,7 +1120,7 @@ def test_hook_no_cwd_key_defaults_to_process_cwd_and_normalizes_camelcase(tmp_pa
     _hook_deny_json(result)
 
 
-@pytest.mark.parametrize("args", [["hook"], ["--claude-hook"], []])
+@pytest.mark.parametrize("args", [["hook"], ["--claude-hook"]])
 def test_hook_mode_aliasing(tmp_path, args):
     mark_ledger(tmp_path)
     event = {"tool_name": "Bash", "tool_input": {"command": "echo x >> DECISIONS.md"},

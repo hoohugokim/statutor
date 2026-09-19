@@ -71,6 +71,13 @@ jobs:
             exit 1
           fi
 
+          # opt-out profile: `--type none` scaffolds the governed files only.
+          none_dir="$(mktemp -d)"
+          statutor init "$none_dir" --type none
+          test -f "$none_dir/.statutor.yaml"
+          test ! -e "$none_dir/plans"
+          test ! -e "$none_dir/notes"
+
           # `statutor check` must deny (exit 2) a write to a frozen path — sample
           # denial run against this repo, without touching any file.
           set +e

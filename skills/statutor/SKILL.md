@@ -56,7 +56,9 @@ Non-negotiable rules:
 ## Scaffolding (/statutor-init or on request)
 
 Run `python3 ${CLAUDE_PLUGIN_ROOT}/core/statutor_core.py init .` (templates are
-embedded in the kernel — the single source of truth). Then fill AGENTS.md
+embedded in the kernel — the single source of truth). A profile detected from
+project markers adds only empty conventional directories; `--type none|min` or
+`STATUTOR_INIT_TYPE` opts out (D-0024). Then fill AGENTS.md
 interactively (commands → conventions → boundaries; refuse derivable
 padding), seed TASKS.md with stable T-NNNN ids, and run the doctor.
 

@@ -25,7 +25,10 @@ Entry modes (all share the same validate() core):
                           ledger, or stay silent when none exists.
   statutor staged [CWD]   Git floor: validate staged changes (pre-commit).
                           exit 1 on violations.
-  statutor init [DIR]     Scaffold governed files from embedded templates.
+  statutor init [DIR] [--type NAME]
+                          Scaffold governed files from embedded templates.
+                          Profiles (D-0024) add conventional directories only:
+                          --type > STATUTOR_INIT_TYPE > marker detection > min.
   statutor global ...     Opt-in global instruction and skill projection manager.
   statutor machine ...    Random machine identity (mode 0600, rotation).
   statutor worker ...     Machine-local worker provenance (begin/record/show/active/complete/compare).
@@ -1396,23 +1399,146 @@ governed:
 }
 
 
-def run_init(target: str) -> int:
-    os.makedirs(os.path.join(target, "plans", "archive"), exist_ok=True)
-    os.makedirs(os.path.join(target, "notes"), exist_ok=True)
-    for name, body in TEMPLATES.items():
-        path = os.path.join(target, name)
+# Init profiles (D-0024): Statutor never mandates a project layout. A profile
+# adds empty *conventional* directories on top of the governed files — never
+# policy, constitution content, or ecosystem files — and every create is
+# additive and idempotent (present paths are skipped, never overwritten or
+# adopted). Definitions live here beside TEMPLATES for the same reason the
+# templates do (D-0003): a profiles/ directory would fork the source of truth.
+#
+# Precedence, highest first: `--type NAME` > `STATUTOR_INIT_TYPE` > the first
+# marker hit in INIT_DETECT_ORDER > `min`. The `min` fallback prints and
+# creates exactly what pre-v0.6 `init` did. `none` adds no directory at all,
+# not even the ledger skeleton.
+
+INIT_SKELETON_DIRS: tuple[str, ...] = ("plans/archive", "notes")
+INIT_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
+    "none": {"dirs": (), "markers": ()},
+    "min": {"dirs": (), "markers": ()},
+    "python": {"dirs": ("tests",),
+               "markers": ("pyproject.toml", "setup.py", "setup.cfg")},
+    "rust": {"dirs": ("tests",), "markers": ("Cargo.toml",)},
+    "node": {"dirs": ("test",), "markers": ("package.json",)},
+    "docs": {"dirs": ("docs",), "markers": ("mkdocs.yml", "_quarto.yml", "docs")},
+}
+INIT_DETECT_ORDER: tuple[str, ...] = ("python", "rust", "node", "docs")
+INIT_TYPE_ENV = "STATUTOR_INIT_TYPE"
+INIT_USAGE = (f"usage: statutor init [DIR] [--type {'|'.join(INIT_PROFILES)}]"
+              f"  (env: {INIT_TYPE_ENV}=NAME)")
+
+
+def _init_profile_name(raw: str, source: str) -> str:
+    name = raw.strip().lower()
+    if name not in INIT_PROFILES:
+        raise ValueError(
+            f"unknown init profile {raw!r} from {source}; "
+            f"choose one of {', '.join(INIT_PROFILES)}")
+    return name
+
+
+def resolve_init_profile(
+    target: str, explicit: str | None = None, env: dict | None = None,
+) -> tuple[str, str]:
+    """Return `(profile, source)` for `target` without touching the disk.
+
+    `source` is `--type`, the environment variable name, `detected <marker>`,
+    or `fallback`. An empty environment value counts as unset (dotfiles often
+    export empty strings); an explicit empty `--type` is an error. `env` of
+    None consults nothing: only the CLI reads the process environment, so
+    in-process callers stay deterministic.
+    """
+    if explicit is not None:
+        return _init_profile_name(explicit, "--type"), "--type"
+    raw = (env or {}).get(INIT_TYPE_ENV, "")
+    if isinstance(raw, str) and raw.strip():
+        return _init_profile_name(raw, INIT_TYPE_ENV), INIT_TYPE_ENV
+    for name in INIT_DETECT_ORDER:
+        for marker in INIT_PROFILES[name]["markers"]:
+            if os.path.lexists(os.path.join(target, marker)):
+                return name, f"detected {marker}"
+    return "min", "fallback"
+
+
+def _ensure_dir(path: str) -> bool:
+    """Create `path` with parents unless anything already exists there.
+
+    A present file, directory, or symlink (even dangling) is left alone; an
+    unwritable or non-directory parent still fails loudly rather than being
+    reported as a skip.
+    """
+    if os.path.lexists(path):
+        return False
+    try:
+        os.makedirs(path)
+    except FileExistsError:
+        return False
+    return True
+
+
+def run_init(target: str, profile: str | None = None, env: dict | None = None) -> int:
+    try:
+        name, source = resolve_init_profile(target, profile, env)
+    except ValueError as exc:
+        print(f"statutor init: {exc}", file=sys.stderr)
+        print(INIT_USAGE, file=sys.stderr)
+        return 64
+    if source != "fallback":
+        print(f"profile {name} ({source})")
+    os.makedirs(target, exist_ok=True)
+    if name != "none":
+        for rel in INIT_SKELETON_DIRS:
+            _ensure_dir(os.path.join(target, rel))  # silent: pre-v0.6 behavior
+    for filename, body in TEMPLATES.items():
+        path = os.path.join(target, filename)
         if os.path.exists(path):
-            print(f"skip  {name} (exists)")
+            print(f"skip  {filename} (exists)")
             continue
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(body)
-        print(f"write {name}")
+        print(f"write {filename}")
     claude_md = os.path.join(target, "CLAUDE.md")
     if not os.path.exists(claude_md):
         with open(claude_md, "w", encoding="utf-8") as fh:
             fh.write("@AGENTS.md\n")
         print("write CLAUDE.md (@AGENTS.md import)")
+    for rel in INIT_PROFILES[name]["dirs"]:
+        if _ensure_dir(os.path.join(target, rel)):
+            print(f"mkdir {rel}/")
+        else:
+            print(f"skip  {rel}/ (exists)")
     return 0
+
+
+def run_init_cli(argv: list[str], env: dict | None = None) -> int:
+    """Parse `statutor init [DIR] [--type NAME]`; the CLI alone reads the env."""
+    target: str | None = None
+    profile: str | None = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            print(INIT_USAGE)
+            return 0
+        if arg == "--type":
+            if i + 1 >= len(argv):
+                print("missing value for --type", file=sys.stderr)
+                print(INIT_USAGE, file=sys.stderr)
+                return 64
+            profile = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--type="):
+            profile = arg[len("--type="):]
+            i += 1
+            continue
+        if arg.startswith("-") or target is not None:
+            print(f"unexpected argument: {arg}", file=sys.stderr)
+            print(INIT_USAGE, file=sys.stderr)
+            return 64
+        target = arg
+        i += 1
+    environment = dict(os.environ) if env is None else env
+    return run_init(target or os.getcwd(), profile, environment)
 
 
 # --------------------------------------------------------------------------
@@ -1434,7 +1560,7 @@ def main() -> None:
     if mode == "trust" and len(argv) > 1 and argv[1] == "approve":
         sys.exit(run_trust_approve(argv[2:]))
     if mode == "init":
-        sys.exit(run_init(argv[1] if len(argv) > 1 else os.getcwd()))
+        sys.exit(run_init_cli(argv[1:]))
     if mode == "global":
         import statutor_global_cli
         sys.exit(statutor_global_cli.main(argv[1:]))

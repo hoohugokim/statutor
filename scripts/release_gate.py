@@ -205,6 +205,7 @@ def _smoke_wheel(wheel: Path, scratch: Path) -> None:
     doctor = bindir / (
         "statutor-doctor.exe" if os.name == "nt" else "statutor-doctor")
     smoke_env = {**os.environ, "PYTHONPATH": str(site)}
+    smoke_env.pop("STATUTOR_INIT_TYPE", None)  # prove the default init profile
     if not statutor.is_file() or not doctor.is_file():
         raise RuntimeError("wheel install did not create both console scripts")
     ledger = scratch / "ledger"

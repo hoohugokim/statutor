@@ -80,6 +80,7 @@ baselines); `worker compare <ref>` explains sibling handoffs read-only.
 
     pipx install statutor                # or: pip install -e .
     statutor init .                      # scaffold any repo, any harness
+    statutor init . --type none          # governed files only; env: STATUTOR_INIT_TYPE
 
     # Claude Code (this repo doubles as the plugin):
     /plugin marketplace add https://github.com/hoohugokim/statutor
@@ -91,6 +92,23 @@ baselines); `worker compare <ref>` explains sibling handoffs read-only.
       - repo: https://github.com/hoohugokim/statutor
         rev: v0.5.1
         hooks: [{id: statutor}]
+
+`init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,
+else `STATUTOR_INIT_TYPE`, else the first marker found in the order below, else
+`min` — and adds only empty conventional directories on top of the governed
+files, `plans/archive/`, `notes/`, and the `CLAUDE.md` bridge. Present paths
+are skipped, never overwritten or adopted; no profile writes policy,
+constitution content, or ecosystem files, and `min` is byte-for-byte the
+pre-v0.6 scaffold.
+
+| Profile | Adds | Selected by |
+|---|---|---|
+| `python` | `tests/` | `pyproject.toml`, `setup.py`, `setup.cfg` |
+| `rust` | `tests/` | `Cargo.toml` |
+| `node` | `test/` | `package.json` |
+| `docs` | `docs/` | `mkdocs.yml`, `_quarto.yml`, an existing `docs/` |
+| `min` | nothing further | fallback when no marker matches |
+| `none` | nothing, not even `plans/archive/` or `notes/` | explicit only |
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
 HEAD snapshot; the git floor judges the transaction under both HEAD and the

@@ -108,9 +108,9 @@ HANDOFF lineage in Git history, which lives as long as the repository does.
 else `STATUTOR_INIT_TYPE`, else the first marker found in the order below, else
 `min` — and adds only empty conventional directories on top of the governed
 files, `plans/archive/`, `notes/`, and the `CLAUDE.md` bridge. Present paths
-are skipped, never overwritten or adopted; no profile writes policy,
-constitution content, or ecosystem files, and `min` is byte-for-byte the
-pre-v0.6 scaffold.
+are skipped, never overwritten, adopted, or followed; no profile writes
+policy, constitution content, or ecosystem files, and the `min` fallback
+prints and creates exactly what the pre-v0.6 `init` did.
 
 | Profile | Adds | Selected by |
 |---|---|---|
@@ -118,8 +118,8 @@ pre-v0.6 scaffold.
 | `rust` | `tests/` | `Cargo.toml` |
 | `node` | `test/` | `package.json` |
 | `docs` | `docs/` | `mkdocs.yml`, `_quarto.yml`, an existing `docs/` |
-| `min` | nothing further | fallback when no marker matches |
-| `none` | nothing, not even `plans/archive/` or `notes/` | explicit only |
+| `min` | nothing further | fallback when no marker matches, or explicitly |
+| `none` | nothing, not even `plans/archive/` or `notes/` | `--type none` or `STATUTOR_INIT_TYPE=none` only |
 
 Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
 HEAD snapshot; the git floor judges the transaction under both HEAD and the

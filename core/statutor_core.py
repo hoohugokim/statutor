@@ -1402,14 +1402,16 @@ governed:
 # Init profiles (D-0024): Statutor never mandates a project layout. A profile
 # adds empty *conventional* directories on top of the governed files — never
 # policy, constitution content, or ecosystem files — and every create is
-# additive and idempotent (present paths are skipped, never overwritten or
-# adopted). Definitions live here beside TEMPLATES for the same reason the
-# templates do (D-0003): a profiles/ directory would fork the source of truth.
+# additive and idempotent (present paths are skipped, never overwritten,
+# adopted, or followed). Definitions live here beside TEMPLATES for the same
+# reason the templates do (D-0003): a profiles/ directory would fork the
+# source of truth.
 #
 # Precedence, highest first: `--type NAME` > `STATUTOR_INIT_TYPE` > the first
-# marker hit in INIT_DETECT_ORDER > `min`. The `min` fallback prints and
-# creates exactly what pre-v0.6 `init` did. `none` adds no directory at all,
-# not even the ledger skeleton.
+# marker hit in INIT_DETECT_ORDER > `min`. A marker written `name/` must be a
+# directory; any other marker must be a regular file. The `min` fallback prints
+# and creates exactly what pre-v0.6 `init` did. `none` adds no directory at
+# all, not even the ledger skeleton.
 
 INIT_SKELETON_DIRS: tuple[str, ...] = ("plans/archive", "notes")
 INIT_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
@@ -1419,7 +1421,7 @@ INIT_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
                "markers": ("pyproject.toml", "setup.py", "setup.cfg")},
     "rust": {"dirs": ("tests",), "markers": ("Cargo.toml",)},
     "node": {"dirs": ("test",), "markers": ("package.json",)},
-    "docs": {"dirs": ("docs",), "markers": ("mkdocs.yml", "_quarto.yml", "docs")},
+    "docs": {"dirs": ("docs",), "markers": ("mkdocs.yml", "_quarto.yml", "docs/")},
 }
 INIT_DETECT_ORDER: tuple[str, ...] = ("python", "rust", "node", "docs")
 INIT_TYPE_ENV = "STATUTOR_INIT_TYPE"
@@ -1434,6 +1436,12 @@ def _init_profile_name(raw: str, source: str) -> str:
             f"unknown init profile {raw!r} from {source}; "
             f"choose one of {', '.join(INIT_PROFILES)}")
     return name
+
+
+def _marker_present(target: str, marker: str) -> bool:
+    """`name/` markers need a directory, others a regular file (links followed)."""
+    path = os.path.join(target, marker.rstrip("/"))
+    return os.path.isdir(path) if marker.endswith("/") else os.path.isfile(path)
 
 
 def resolve_init_profile(
@@ -1454,25 +1462,51 @@ def resolve_init_profile(
         return _init_profile_name(raw, INIT_TYPE_ENV), INIT_TYPE_ENV
     for name in INIT_DETECT_ORDER:
         for marker in INIT_PROFILES[name]["markers"]:
-            if os.path.lexists(os.path.join(target, marker)):
+            if _marker_present(target, marker):
                 return name, f"detected {marker}"
     return "min", "fallback"
 
 
-def _ensure_dir(path: str) -> bool:
-    """Create `path` with parents unless anything already exists there.
+def _ensure_dir(root: str, rel: str) -> bool:
+    """Create `root/rel` one component at a time; True when the leaf was created.
 
-    A present file, directory, or symlink (even dangling) is left alone; an
-    unwritable or non-directory parent still fails loudly rather than being
-    reported as a skip.
+    Any present component that is a symlink or not a directory blocks the
+    whole path (returned as a skip): init never follows a link out of the
+    target and never adopts a file. A concurrent creator is a skip too.
+    Permission failures still propagate.
     """
-    if os.path.lexists(path):
-        return False
+    current = root
+    created = False
+    for part in rel.split("/"):
+        current = os.path.join(current, part)
+        if os.path.lexists(current):
+            if os.path.islink(current) or not os.path.isdir(current):
+                return False
+            created = False
+            continue
+        try:
+            os.mkdir(current)
+            created = True
+        except FileExistsError:
+            created = False
+    return created
+
+
+def _create_file(path: str, body: str) -> bool:
+    """Exclusively create `path`; False when any entry (even a dangling link) exists."""
     try:
-        os.makedirs(path)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     except FileExistsError:
         return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(body)
     return True
+
+
+def _present_kind(path: str) -> str:
+    if os.path.isdir(path) and not os.path.islink(path):
+        return "exists"
+    return "present, left alone"
 
 
 def run_init(target: str, profile: str | None = None, env: dict | None = None) -> int:
@@ -1484,61 +1518,77 @@ def run_init(target: str, profile: str | None = None, env: dict | None = None) -
         return 64
     if source != "fallback":
         print(f"profile {name} ({source})")
-    os.makedirs(target, exist_ok=True)
-    if name != "none":
-        for rel in INIT_SKELETON_DIRS:
-            _ensure_dir(os.path.join(target, rel))  # silent: pre-v0.6 behavior
-    for filename, body in TEMPLATES.items():
-        path = os.path.join(target, filename)
-        if os.path.exists(path):
-            print(f"skip  {filename} (exists)")
-            continue
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        print(f"write {filename}")
-    claude_md = os.path.join(target, "CLAUDE.md")
-    if not os.path.exists(claude_md):
-        with open(claude_md, "w", encoding="utf-8") as fh:
-            fh.write("@AGENTS.md\n")
-        print("write CLAUDE.md (@AGENTS.md import)")
-    for rel in INIT_PROFILES[name]["dirs"]:
-        if _ensure_dir(os.path.join(target, rel)):
-            print(f"mkdir {rel}/")
-        else:
-            print(f"skip  {rel}/ (exists)")
+    if os.path.lexists(target) and not os.path.isdir(target):
+        print(f"statutor init: target {target!r} exists and is not a directory",
+              file=sys.stderr)
+        return 1
+    try:
+        os.makedirs(target, exist_ok=True)
+        if name != "none":
+            for rel in INIT_SKELETON_DIRS:
+                _ensure_dir(target, rel)  # silent: pre-v0.6 behavior
+        for filename, body in TEMPLATES.items():
+            if _create_file(os.path.join(target, filename), body):
+                print(f"write {filename}")
+            else:
+                print(f"skip  {filename} (exists)")
+        if _create_file(os.path.join(target, "CLAUDE.md"), "@AGENTS.md\n"):
+            print("write CLAUDE.md (@AGENTS.md import)")
+        for rel in INIT_PROFILES[name]["dirs"]:
+            if _ensure_dir(target, rel):
+                print(f"mkdir {rel}/")
+            else:
+                print(f"skip  {rel}/ ({_present_kind(os.path.join(target, rel))})")
+    except OSError as exc:
+        print(f"statutor init: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
 def run_init_cli(argv: list[str], env: dict | None = None) -> int:
-    """Parse `statutor init [DIR] [--type NAME]`; the CLI alone reads the env."""
+    """Parse `statutor init [DIR] [--type NAME] [-- DIR]`; the CLI alone reads the env."""
     target: str | None = None
     profile: str | None = None
+    positional_only = False
     i = 0
+
+    def usage_error(message: str) -> int:
+        print(f"statutor init: {message}", file=sys.stderr)
+        print(INIT_USAGE, file=sys.stderr)
+        return 64
+
     while i < len(argv):
         arg = argv[i]
-        if arg in ("-h", "--help"):
-            print(INIT_USAGE)
-            return 0
-        if arg == "--type":
-            if i + 1 >= len(argv):
-                print("missing value for --type", file=sys.stderr)
-                print(INIT_USAGE, file=sys.stderr)
-                return 64
-            profile = argv[i + 1]
-            i += 2
-            continue
-        if arg.startswith("--type="):
-            profile = arg[len("--type="):]
-            i += 1
-            continue
-        if arg.startswith("-") or target is not None:
-            print(f"unexpected argument: {arg}", file=sys.stderr)
-            print(INIT_USAGE, file=sys.stderr)
-            return 64
+        if not positional_only:
+            if arg in ("-h", "--help"):
+                print(INIT_USAGE)
+                return 0
+            if arg == "--":
+                positional_only = True
+                i += 1
+                continue
+            if arg == "--type" or arg.startswith("--type="):
+                if profile is not None:
+                    return usage_error("--type given more than once")
+                if arg == "--type":
+                    if i + 1 >= len(argv):
+                        return usage_error("missing value for --type")
+                    profile = argv[i + 1]
+                    i += 2
+                else:
+                    profile = arg[len("--type="):]
+                    i += 1
+                continue
+            if arg.startswith("-"):
+                return usage_error(f"unexpected argument: {arg}")
+        if not arg:
+            return usage_error("DIR must not be empty")
+        if target is not None:
+            return usage_error(f"unexpected argument: {arg}")
         target = arg
         i += 1
     environment = dict(os.environ) if env is None else env
-    return run_init(target or os.getcwd(), profile, environment)
+    return run_init(target if target is not None else os.getcwd(), profile, environment)
 
 
 # --------------------------------------------------------------------------

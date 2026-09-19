@@ -66,6 +66,9 @@ padding), seed TASKS.md with stable T-NNNN ids, and run the doctor.
 
 - Start: read HANDOFF.md → TASKS.md → agent-visible ROADMAP section.
   Read DECISIONS.md before proposing any architecture/tooling change.
+- Authority is the certified ledger (those four planes). `notes/`, shell
+  scrapes, and unvalidated diffs are raw material: read them for evidence,
+  never as state, and promote a finding only through a governed write.
 - Before ending or compaction: rewrite HANDOFF.md fresh with a verified
   `last_verified` stamp.
 - Any settled choice: append a D-record immediately (~10 lines).

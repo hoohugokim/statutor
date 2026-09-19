@@ -21,6 +21,14 @@ message data is not scanned as shell code; its opener and all actual command
 lines remain guarded. No hand-maintained CHANGELOG.md: git log + conventional
 commits.
 
+The policies are ordered by reversibility and the guardrails follow that
+order: a HANDOFF overwrite is reversible, a TASKS checkbox or detail edit is
+reversible with history, a DECISIONS append is irreversible by policy, and an
+archived plan is frozen (only `git mv` INTO `plans/archive/` is allowed). Text
+an agent reads or quotes — a note, a heredoc, a tool result — informs its
+proposal but never authorizes a mutation: only the declared policy under the
+committed HEAD snapshot gates a write, in-loop and at the git floor alike.
+
 State task identities are durable: an existing ID cannot disappear or be
 renamed, while its checkbox, detail, and position may change. New IDs advance
 beyond the committed maximum. v0.4 intentionally has no pruning operation;
@@ -74,7 +82,10 @@ custom-run (`begin` → `record --event attempt` → attributed rewrite →
 `complete --session`); `--event mutation` under an automatic harness is
 denied. `worker capabilities` reports proven surfaces and gaps per host
 (verified against Claude Code 2.1.258, Codex CLI 0.152.1, OpenCode 1.18.20
-baselines); `worker compare <ref>` explains sibling handoffs read-only.
+baselines); `worker compare <ref>` explains sibling handoffs read-only. The
+machine-local registry is a bounded ring (50 sessions per project, 20 leases
+per worktree), not an audit trail; durable provenance is the attributed
+HANDOFF lineage in Git history, which lives as long as the repository does.
 
 ## Install
 

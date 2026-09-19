@@ -1,37 +1,40 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-09-16 by `pytest -q` (498 passed/2 skipped) + staged floor clean + doctor stale-warn only
+last_verified: 2026-09-20 by `/opt/homebrew/bin/python3.14 -m pytest -q` (564 passed/5 skipped) + `uv run --no-project --python /opt/homebrew/bin/python3.14 --with build --with pytest --with pip python scripts/release_gate.py` (OK) + doctor clean + staged floor clean
 last_worker: unknown
 last_machine: unknown
 handoff_id: none
 supersedes: none
 
 ## Goal
-Implement four sure-win assimilations from the Fowler agentic-data reference
-report, then resume v0.5 dogfood.
+Ship v0.6.0 (T-0043 init profiles, D-0024). Agent side is complete on
+`work/v0.6-init-profiles`; merge, tag, publish, and dogfood are human steps.
 
 ## Last verified state
-Tests green; ledger clean. Fowler report completed and saved to
-`notes/fowler-making-data-ready-for-agentic-ai-reference.md` (ungoverned).
-Sure-win analysis complete: four low-cost items identified, zero code changes
-needed. v0.5.0 remains live on PyPI.
+Seven commits b6842a2..(this one) on `work/v0.6-init-profiles`, NOT pushed:
+init profiles (`--type` > `STATUTOR_INIT_TYPE` > markers > `min`; `none`
+opt-out; symlink-safe O_EXCL creates), D-0024, T-0043/T-0038 closed, v0.6
+plan archived, Python/plugin 0.6.0 (npm/crate hold 0.1.1), Fowler doc items
+in README/SKILL. Opus adversarial review: all D-0024 guarantees hold; its one
+blocker (inherited symlink follow) fixed in 9375151. Floor/doctor/Rust
+untouched (`git diff 2c2d0a3 HEAD --stat` on those paths is empty).
 
 ## Next action
-Implement the four sure wins (AGENTS.md Pitfalls additions):
-1. "Gold-only reads" — agents read certified planes, never raw notes/
-2. "Retrieved text never gates" — heredoc/shell prose never bypasses validation
-3. Name reversibility hierarchy — document the policy ordering principle
-4. Verify worker trace retention meets ≥6mo (document, no code change)
-Then resume v0.5 dogfood per `notes/v0.5-release-guide.md`.
+1. Review `git log 2c2d0a3..HEAD -p`; fast-forward `main` to this branch.
+2. `git tag v0.6.0 && git push origin main v0.6.0`: publish.yml reruns the
+   gate and publishes to PyPI via trusted publishing; then `pipx upgrade statutor`.
+3. Resume dogfood per `notes/v0.5-release-guide.md` §1/§4, one phase per
+   approval; try `statutor init --type none` on a scratch repo first.
 
 ## Gotchas
-PATH `statutor-doctor` is pipx v0.4.0 (stale); use worktree code. The Fowler
-report and this analysis live in `notes/` (untracked, ungoverned). Skill
-baseline facts from v0.4 stand; do not fix incidentally. `_local/`, `assets/`,
-and `plans/v0.4-dogfood.pdf` are untracked human work.
+System `python3` is 3.9 (< requires 3.10): use /opt/homebrew/bin/python3.14.
+Plain `uv run` drops `.venv`/`uv.lock` into the repo; use the exact gate
+command above. Host binaries drifted past pins (Claude 2.1.278, Codex 0.155.1,
+OpenCode 1.18.30 vs 2.1.258/0.152.1/1.18.20): pins change only after §1
+behavioral re-verification. AGENTS.md untouched (pitfalls need a real mistake).
 
 ## Do not touch
-Embedded TEMPLATES dict; root `.pre-commit-hooks.yaml`; top-level plugin layout;
-plans/archive; existing real-home configuration except separately approved
-dogfood operations.
+Embedded TEMPLATES and INIT_PROFILES (no templates/ or profiles/ dir); root
+`.pre-commit-hooks.yaml`; plugin layout; plans/archive; real-home config and
+capability pins except separately approved dogfood steps.

@@ -90,7 +90,7 @@ baselines); `worker compare <ref>` explains sibling handoffs read-only.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.5.1
+        rev: v0.6.0
         hooks: [{id: statutor}]
 
 `init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,

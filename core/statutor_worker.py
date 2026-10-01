@@ -30,7 +30,7 @@ from typing import Mapping
 import statutor_global as substrate
 
 SCHEMA_VERSION = 1
-HARNESSES = ("claude", "codex", "opencode", "custom", "human", "unknown")
+HARNESSES = ("claude", "codex", "opencode", "antigravity", "gemini", "custom", "human", "unknown")
 ROLES = ("primary", "subagent", "unknown")
 EVENTS = ("activity", "attempt", "mutation")
 BASES = ("completed", "mutation", "activity", "attempt")
@@ -76,6 +76,27 @@ CAPABILITIES: dict[str, dict[str, object]] = {
                                "distinction is exposed",
         "note": "Subagent tool calls fire the same hooks; server-namespaced "
                 "MCP tool ids never match the allowlist.",
+    },
+    "antigravity": {
+        "verified_against": "Google Antigravity 2.0 / agy",
+        "attempt_surface": "PreToolUse hook (run_command|write_to_file|replace_file_content)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host session id when exposed, else generated",
+        "note": "Stop hook surfaces drift only; completion is executor-run "
+                "`worker complete`.",
+    },
+    "gemini": {
+        "verified_against": "Google Antigravity / Gemini CLI",
+        "attempt_surface": "PreToolUse hook (run_command|write_to_file|replace_file_content)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host session id when exposed, else generated",
+        "note": "Alias/sibling harness for Google Antigravity / Gemini ecosystem.",
     },
     "custom": {
         "verified_against": "n/a (caller-proved)",

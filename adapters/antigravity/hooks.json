@@ -1,0 +1,23 @@
+{
+  "statutor": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "statutor hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "statutor hook --stop",
+        "timeout": 30
+      }
+    ]
+  }
+}

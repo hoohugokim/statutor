@@ -82,11 +82,22 @@ def main() -> int:
     except Exception:
         return 0  # can't parse input: fail open
 
+    is_antigravity = ("executionNum" in event or "workspacePaths" in event
+                      or "terminationReason" in event)
+
     if event.get("stop_hook_active"):
         return 0  # already continued once this turn: surface once, then get out of the way
+    if event.get("executionNum", 1) > 1:
+        if is_antigravity:
+            print(json.dumps({"decision": "allow"}))
+        return 0
 
-    project_dir = _find_ledger_root(event.get("cwd") or os.getcwd())
+    workspace_paths = event.get("workspacePaths", [])
+    cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+    project_dir = _find_ledger_root(cwd)
     if project_dir is None:
+        if is_antigravity:
+            print(json.dumps({"decision": "allow"}))
         return 0  # not a statutor ledger: stay completely out of the way
 
     try:
@@ -95,6 +106,8 @@ def main() -> int:
             capture_output=True, text=True, timeout=20,
         )
     except Exception:
+        if is_antigravity:
+            print(json.dumps({"decision": "allow"}))
         return 0  # doctor itself broke or hung: fail open
 
     findings = [
@@ -115,16 +128,24 @@ def main() -> int:
             findings = []  # untouched scaffold: init-state noise, not drift
 
     if not findings:
+        if is_antigravity:
+            print(json.dumps({"decision": "allow"}))
         return 0  # clean ledger (or only-sentinel scaffold): completely silent
 
     report = "\n".join(findings)
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "Stop",
-            "additionalContext": f"statutor-doctor found drift in the ledger:\n{report}",
-        },
-        "systemMessage": f"statutor-doctor: {len(findings)} issue(s) found — see transcript.",
-    }))
+    if is_antigravity:
+        print(json.dumps({
+            "decision": "continue",
+            "reason": f"statutor-doctor found drift in the ledger:\n{report}",
+        }))
+    else:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "Stop",
+                "additionalContext": f"statutor-doctor found drift in the ledger:\n{report}",
+            },
+            "systemMessage": f"statutor-doctor: {len(findings)} issue(s) found — see transcript.",
+        }))
     return 0
 
 

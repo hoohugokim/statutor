@@ -329,10 +329,22 @@ def _match_rule(rel_path: str, policy: dict) -> dict | None:
 
 
 def _norm(payload: dict) -> dict:
-    """Normalize harness arg names (Claude snake_case, OpenCode camelCase)."""
+    """Normalize harness arg names (Claude snake_case, OpenCode camelCase, Antigravity PascalCase)."""
     out = dict(payload or {})
-    for a, b in (("filePath", "file_path"), ("oldString", "old_string"),
-                 ("newString", "new_string")):
+    mappings = (
+        ("filePath", "file_path"),
+        ("oldString", "old_string"),
+        ("newString", "new_string"),
+        ("TargetFile", "file_path"),
+        ("TargetContent", "old_string"),
+        ("ReplacementContent", "new_string"),
+        ("CodeContent", "content"),
+        ("CommandLine", "command"),
+        ("AllowMultiple", "replace_all"),
+        ("Overwrite", "overwrite"),
+        ("Append", "append"),
+    )
+    for a, b in mappings:
         if a in out and b not in out:
             out[b] = out[a]
     return out
@@ -416,6 +428,12 @@ def validate(
     root = os.path.abspath(policy_root or cwd)
     policy = policy or load_policy(root)
     tool = tool.lower()
+    if tool == "run_command":
+        tool = "bash"
+    elif tool == "write_to_file":
+        tool = "write"
+    elif tool == "replace_file_content":
+        tool = "edit"
     payload = _norm(payload)
 
     if tool == "bash":
@@ -437,10 +455,21 @@ def validate(
     if kind == "frozen":
         return f"{rel} is frozen (archived plan). Archived records are immutable."
 
+    if kind == "overwrite_bounded" and tool == "write" and payload.get("append"):
+        return (f"{rel} is overwrite-bounded. Appending is denied: overwrite the "
+                "entire shift-change note, compress, and drop history.")
+
     if kind in ("constitution", "overwrite_bounded"):
         candidate: str | None = None
         if tool == "write":
-            candidate = payload.get("content", "")
+            if payload.get("append"):
+                try:
+                    existing = open(absolute_path, encoding="utf-8").read()
+                except OSError:
+                    existing = ""
+                candidate = existing + payload.get("content", "")
+            else:
+                candidate = payload.get("content", "")
         else:
             old = payload.get("old_string", "")
             new = payload.get("new_string", "")
@@ -466,7 +495,10 @@ def validate(
         except OSError:
             existing = None
         if tool == "write":
-            candidate = payload.get("content", "")
+            if payload.get("append") and existing is not None:
+                candidate = existing + payload.get("content", "")
+            else:
+                candidate = payload.get("content", "")
         elif existing is not None:
             old = payload.get("old_string", "")
             if old and old in existing:
@@ -486,13 +518,14 @@ def validate(
                         "(new_string must contain old_string verbatim). To change a "
                         "decision, append a superseding record — never edit the old one.")
         elif tool == "write":
-            try:
-                existing = open(absolute_path, encoding="utf-8").read()
-            except FileNotFoundError:
-                existing = ""
-            if existing.strip() and existing.strip() not in payload.get("content", ""):
-                return (f"{rel} is append-only. A full rewrite must contain the "
-                        "existing content verbatim; records are never modified or deleted.")
+            if not payload.get("append"):
+                try:
+                    existing = open(absolute_path, encoding="utf-8").read()
+                except FileNotFoundError:
+                    existing = ""
+                if existing.strip() and existing.strip() not in payload.get("content", ""):
+                    return (f"{rel} is append-only. A full rewrite must contain the "
+                            "existing content verbatim; records are never modified or deleted.")
     return None
 
 
@@ -789,7 +822,80 @@ def _automatic_reason(tool: str, payload: dict, cwd: str) -> str | None:
         return f"{reason} {_policy_authority_note(root)}"
     return None
 
-def run_hook() -> int:
+def _run_stop_event(event: dict, is_antigravity: bool) -> int:
+    try:
+        if event.get("stop_hook_active"):
+            return 0
+        if event.get("executionNum", 1) > 1:
+            if is_antigravity:
+                print(json.dumps({"decision": "allow"}))
+            return 0
+
+        workspace_paths = event.get("workspacePaths", [])
+        cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+        project_dir = find_ledger_root(cwd)
+        if project_dir is None:
+            if is_antigravity:
+                print(json.dumps({"decision": "allow"}))
+            return 0
+
+        import statutor_doctor
+        statutor_doctor.check(project_dir)
+        findings = [f"WARN  {w}" for w in statutor_doctor.warnings] + [f"ERROR {e}" for e in statutor_doctor.errors]
+
+        state_filename = "HANDOFF.md"
+        try:
+            for rule in load_worktree_policy(project_dir).get("governed", []):
+                pattern = rule.get("pattern", "")
+                if (rule.get("policy") == "overwrite_bounded" and pattern
+                        and "*" not in pattern and "/" not in pattern):
+                    state_filename = pattern
+                    break
+        except Exception:
+            pass
+
+        sentinel_prefix = f"WARN  {state_filename} last verified"
+        handoff_path = os.path.join(project_dir, state_filename)
+        if os.path.isfile(handoff_path) and len(findings) == 1 and findings[0].startswith(sentinel_prefix):
+            try:
+                handoff_text = open(handoff_path, encoding="utf-8").read()
+            except Exception:
+                handoff_text = ""
+            if "last_verified: 1970-01-01" in handoff_text:
+                findings = []
+
+        if not findings:
+            if is_antigravity:
+                print(json.dumps({"decision": "allow"}))
+            return 0
+
+        report = "\n".join(findings)
+        if is_antigravity:
+            print(json.dumps({
+                "decision": "continue",
+                "reason": f"statutor-doctor found drift in the ledger:\n{report}",
+            }))
+        else:
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "Stop",
+                    "additionalContext": f"statutor-doctor found drift in the ledger:\n{report}",
+                },
+                "systemMessage": f"statutor-doctor: {len(findings)} issue(s) found — see transcript.",
+            }))
+    except Exception:
+        if is_antigravity:
+            try:
+                print(json.dumps({"decision": "allow"}))
+            except Exception:
+                pass
+    return 0
+
+
+def run_hook(argv: list[str] | None = None) -> int:
+    argv = argv or []
+    stop_mode = "--stop" in argv
+    force_antigravity = "--antigravity" in argv
     if sys.stdin.isatty():
         # A TTY means a human ran the hook with no piped event (harnesses
         # always pipe JSON). Fail fast with usage instead of blocking on
@@ -797,20 +903,74 @@ def run_hook() -> int:
         print("statutor hook expects piped hook JSON on stdin; "
               "run `statutor --help` for modes.", file=sys.stderr)
         return 64
+    is_antigravity = force_antigravity
     try:
-        event = json.load(sys.stdin)
+        raw = sys.stdin.read()
+        if not raw.strip():
+            return 0
+        event = json.loads(raw)
+        if not isinstance(event, dict):
+            return 0
+    except Exception:
+        return 0  # fail open
+
+    if "toolCall" in event or "workspacePaths" in event or "executionNum" in event or "terminationReason" in event:
+        is_antigravity = True
+
+    if stop_mode or "executionNum" in event or "terminationReason" in event or "stop_hook_active" in event:
+        return _run_stop_event(event, is_antigravity)
+
+    if is_antigravity and "toolCall" in event:
+        try:
+            tool_call = event.get("toolCall", {}) or {}
+            raw_tool = tool_call.get("name", "")
+            raw_args = tool_call.get("args", {}) or {}
+            workspace_paths = event.get("workspacePaths", [])
+            cwd = raw_args.get("Cwd") or event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+            reason = _automatic_reason(raw_tool, raw_args, cwd)
+            if reason:
+                print(json.dumps({
+                    "decision": "deny",
+                    "reason": f"[statutor] {reason}",
+                }))
+            else:
+                print(json.dumps({
+                    "decision": "allow",
+                }))
+        except Exception:
+            try:
+                print(json.dumps({"decision": "allow"}))
+            except Exception:
+                pass
+        return 0
+
+    try:
         tool = event.get("tool_name", "")
         payload = event.get("tool_input", {}) or {}
         cwd = event.get("cwd", os.getcwd())
         reason = _automatic_reason(tool, payload, cwd)
         if reason:
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": f"[statutor] {reason}",
-            }}))
+            if is_antigravity:
+                print(json.dumps({
+                    "decision": "deny",
+                    "reason": f"[statutor] {reason}",
+                }))
+            else:
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": f"[statutor] {reason}",
+                }}))
+        elif is_antigravity:
+            print(json.dumps({
+                "decision": "allow",
+            }))
     except Exception:
-        pass  # fail open
+        if is_antigravity:
+            try:
+                print(json.dumps({"decision": "allow"}))
+            except Exception:
+                pass
     return 0
 
 
@@ -1602,7 +1762,7 @@ def main() -> None:
         sys.exit(0 if argv else 64)
     mode = argv[0]
     if mode in ("hook", "--claude-hook"):
-        sys.exit(run_hook())
+        sys.exit(run_hook(argv[1:]))
     if mode == "check":
         sys.exit(run_check(argv[1:]))
     if mode in ("staged", "--staged"):

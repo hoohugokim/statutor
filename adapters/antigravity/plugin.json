@@ -1,0 +1,11 @@
+{
+  "name": "statutor",
+  "displayName": "Statutor Ledger",
+  "version": "0.6.0",
+  "description": "Typed project-ledger discipline for agentic repos: constitution, state, log, and plan planes enforced by hooks and the git floor for Google Antigravity.",
+  "suggestedPrompts": [
+    "Initialize a Statutor ledger in this repository",
+    "Run statutor-doctor to check for ledger drift",
+    "Record an architectural decision in DECISIONS.md"
+  ]
+}

@@ -1947,3 +1947,14 @@ def test_templates_key_set_and_no_templates_dir():
     assert set(statutor_core.TEMPLATES.keys()) == {
         "AGENTS.md", "HANDOFF.md", "DECISIONS.md", "TASKS.md", "ROADMAP.md", ".statutor.yaml"}
     assert not (REPO_ROOT / "templates").exists()
+
+
+def test_version_cli(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["statutor", "version"])
+    with pytest.raises(SystemExit) as excinfo:
+        statutor_core.main()
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("statutor ")
+    assert out.split()[1] in (statutor_core.__version__, "0.7.1")
+

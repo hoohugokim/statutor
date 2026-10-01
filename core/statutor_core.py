@@ -29,6 +29,7 @@ Entry modes (all share the same validate() core):
                           Scaffold governed files from embedded templates.
                           Profiles (D-0024) add conventional directories only:
                           --type > STATUTOR_INIT_TYPE > marker detection > min.
+  statutor version        Print installed and active version.
   statutor global ...     Opt-in global instruction and skill projection manager.
   statutor machine ...    Random machine identity (mode 0600, rotation).
   statutor worker ...     Machine-local worker provenance (begin/record/show/active/complete/compare).
@@ -46,6 +47,8 @@ import os
 import re
 import subprocess
 import sys
+
+__version__ = "0.7.1"
 
 # --------------------------------------------------------------------------
 # policy
@@ -1761,6 +1764,14 @@ def main() -> None:
         print(__doc__)
         sys.exit(0 if argv else 64)
     mode = argv[0]
+    if mode in ("version", "--version", "-v"):
+        try:
+            import importlib.metadata
+            v = importlib.metadata.version("statutor")
+        except Exception:
+            v = __version__
+        print(f"statutor {v}")
+        sys.exit(0)
     if mode in ("hook", "--claude-hook"):
         sys.exit(run_hook(argv[1:]))
     if mode == "check":

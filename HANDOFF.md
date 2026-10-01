@@ -1,30 +1,31 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-02 by `/opt/homebrew/bin/python3.14 -m pytest -q` (581 passed/5 skipped) + `python3 core/statutor_doctor.py .` (clean)
+last_verified: 2026-10-02 by `statutor version` (statutor 0.7.1) + `/opt/homebrew/bin/python3.14 -m pytest -q` (582 passed/5 skipped) + `statutor-doctor .` (clean)
 last_worker: antigravity
 last_machine: unknown
 handoff_id: none
 supersedes: none
 
 ## Goal
-Revision Google Antigravity adapter and harness compatibility as v0.7.0 (T-0044, D-0025).
+Implement `statutor version` command and release as v0.7.1 (T-0045).
 
 ## Last verified state
-Antigravity adapter revisioned to v0.7.0 cleanly:
-- `pyproject.toml`, `.claude-plugin/plugin.json`, `adapters/antigravity/plugin.json` bumped to 0.7.0.
-- `README.md` updated with Antigravity adapter table row.
-- Consumed plan archived to `plans/archive/v0.7-antigravity-adapter.md`.
-- `tests/test_release_gate.py` updated to 0.7.0 parity.
-- 581 tests passed, 5 skipped; `statutor-doctor .` clean; global hooks and plugin link active.
+`statutor version` CLI implemented & tested (582 passed, 5 skipped):
+- `core/statutor_core.py`: added `__version__ = "0.7.1"`, handles `statutor version` / `--version` / `-v`.
+- `pyproject.toml`, `.claude-plugin/plugin.json`, `adapters/antigravity/plugin.json` bumped to 0.7.1.
+- `tests/test_kernel.py`: added `test_version_cli`.
+- `tests/test_release_gate.py`: updated for 0.7.1 parity.
+- `TASKS.md`: closed T-0045.
+- pipx editable install upgraded to 0.7.1; live `statutor version` outputs `statutor 0.7.1`.
 
 ## Next action
-1. Stage modified files (`git add pyproject.toml .claude-plugin/plugin.json adapters/antigravity/ README.md plans/archive/ tests/test_release_gate.py HANDOFF.md`).
+1. Stage modified files (`git add pyproject.toml .claude-plugin/plugin.json adapters/antigravity/plugin.json core/statutor_core.py tests/ TASKS.md HANDOFF.md`).
 2. Verify staged index with `statutor staged .`.
-3. Commit v0.7.0 revision.
+3. Commit v0.7.1 release.
 
 ## Gotchas
-Antigravity PreToolUse requires `decision: "allow"` or `decision: "deny"`; Claude Code expects silence on allow. `statutor hook` auto-detects caller schema via `toolCall`/`workspacePaths`. `write_to_file` with `Append: true` is forbidden on `overwrite_bounded` registers.
+`statutor version` checks `importlib.metadata.version('statutor')` first, falling back to kernel `__version__` if uninstalled/in development.
 
 ## Do not touch
 Embedded TEMPLATES and INIT_PROFILES; root `.pre-commit-hooks.yaml`; plugin layout; plans/archive.

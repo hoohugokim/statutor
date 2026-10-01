@@ -53,6 +53,7 @@ archive exists (D-0016).
 | Adapter | Mechanism | Coverage |
 |---|---|---|
 | Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash\|apply_patch` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
+| Google Antigravity (`adapters/antigravity/`) | PreToolUse (`run_command\|write_to_file\|replace_file_content`) → `statutor hook`; Stop → `statutor hook --stop` | full in-loop + drift surfacing |
 | OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check --if-ledger` | in-loop (write/edit/bash)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |

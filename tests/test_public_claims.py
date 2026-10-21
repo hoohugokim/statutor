@@ -34,7 +34,7 @@ def test_global_e2e_is_explicit_and_real_home_safe() -> None:
     assert "temporary profile" in root
     assert "never mutates the caller's real home" in root
     assert "never points a host at the caller's real home" in script
-    assert "never performs a\nmodel or network request" in script
+    assert "never performs a\nmodel or external network request" in script
 
 
 def test_staged_mode_is_not_advertised_as_server_or_static() -> None:

@@ -261,6 +261,37 @@ def test_hook_stop_antigravity_drift_bounded_to_one_continuation(monkeypatch, ca
     assert out["decision"] == "allow"
 
 
+def test_hook_stop_antigravity_outside_workspace_allows(monkeypatch, capsys):
+    event = {
+        "executionNum": 1,
+        "terminationReason": "model_stop",
+        "fullyIdle": True,
+        "workspacePaths": [],
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    exit_code = kernel.run_hook()
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["decision"] == "allow"
+
+
+def test_hook_pre_tool_use_outside_workspace_without_cwd_allows(monkeypatch, capsys):
+    event = {
+        "toolCall": {
+            "name": "run_command",
+            "args": {"CommandLine": "echo 'x'"},
+        },
+        "stepIdx": 1,
+        "workspacePaths": [],
+        "conversationId": "test-conv-no-ws",
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    exit_code = kernel.run_hook()
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["decision"] == "allow"
+
+
 # --------------------------------------------------------------------------
 # 4. Worker provenance & capabilities
 # --------------------------------------------------------------------------
@@ -334,6 +365,7 @@ def test_plugin_rules_agents_md_exists():
     assert "Constitution" in content
     assert "HANDOFF.md" in content
     assert "DECISIONS.md" in content
+    assert "Applicability" in content
 
 
 def test_plugin_skills_bundle():

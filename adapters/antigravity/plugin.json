@@ -1,7 +1,7 @@
 {
   "name": "statutor",
   "displayName": "Statutor Ledger",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Typed project-ledger discipline for agentic repos: constitution, state, log, and plan planes enforced by hooks and the git floor for Google Antigravity.",
   "suggestedPrompts": [
     "Initialize a Statutor ledger in this repository",

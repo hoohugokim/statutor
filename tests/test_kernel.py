@@ -1956,5 +1956,5 @@ def test_version_cli(monkeypatch, capsys):
     assert excinfo.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out.startswith("statutor ")
-    assert out.split()[1] in (statutor_core.__version__, "0.7.1")
+    assert out.split()[1] in (statutor_core.__version__, "0.7.2")
 

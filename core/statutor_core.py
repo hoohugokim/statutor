@@ -48,7 +48,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 # --------------------------------------------------------------------------
 # policy
@@ -835,7 +835,13 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
             return 0
 
         workspace_paths = event.get("workspacePaths", [])
-        cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+        if is_antigravity:
+            cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else None)
+            if not cwd:
+                print(json.dumps({"decision": "allow"}))
+                return 0
+        else:
+            cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
         project_dir = find_ledger_root(cwd)
         if project_dir is None:
             if is_antigravity:
@@ -929,7 +935,12 @@ def run_hook(argv: list[str] | None = None) -> int:
             raw_tool = tool_call.get("name", "")
             raw_args = tool_call.get("args", {}) or {}
             workspace_paths = event.get("workspacePaths", [])
-            cwd = raw_args.get("Cwd") or event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+            target_file = raw_args.get("TargetFile")
+            file_dir = os.path.dirname(os.path.abspath(target_file)) if target_file else None
+            cwd = raw_args.get("Cwd") or file_dir or event.get("cwd") or (workspace_paths[0] if workspace_paths else None)
+            if not cwd:
+                print(json.dumps({"decision": "allow"}))
+                return 0
             reason = _automatic_reason(raw_tool, raw_args, cwd)
             if reason:
                 print(json.dumps({

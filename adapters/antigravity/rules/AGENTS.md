@@ -1,5 +1,9 @@
 # Statutor Ledger Rules for Antigravity
 
+> [!IMPORTANT]
+> **Applicability**: These rules apply ONLY when operating inside a project with an active Statutor ledger (`.statutor.yaml`).
+> If no `.statutor.yaml` is present in the workspace, or if running outside a project, completely ignore these ledger rules.
+
 Statutor is a typed project-ledger framework: repo instruction files are a
 state machine of typed registers, each with a mutation policy and exactly one
 writer — enforced by lifecycle hooks and the git floor, not by prose.

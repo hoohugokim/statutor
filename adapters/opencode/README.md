@@ -1,7 +1,13 @@
 # statutor × OpenCode
 
-1. `pipx install statutor` — the adapter shells out to the Python kernel CLI;
-   without it the plugin is a no-op. From a source checkout, the developer
+`statutor.ts` is one file with a default export that serves both plugin APIs:
+`setup()` on OpenCode 2.x and `server()` on OpenCode 1.x
+([1.18.29 or newer](https://opencode.ai/v2/docs/build/plugins/migrate-v1),
+the first release with object entrypoints). Both register the same guard on
+tool execution and shell out to the Python kernel CLI.
+
+1. `pipx install statutor` — the adapter shells out to the kernel; without the
+   CLI on `PATH` the plugin is a no-op. From a source checkout, the developer
    equivalent is `python -m pip install -e .` at the repository root.
    The adapter calls `statutor check --if-ledger`: it stays silent unless the
    nearest ancestor has `.statutor.yaml`, so a user-level installation does
@@ -9,20 +15,63 @@
 2. Install the adapter itself:
 
    ```jsonc
-   // opencode.json
+   // OpenCode 2.x — opencode.json
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugin": ["statutor"]          // pin with "statutor@0.1.1"
+     "plugins": ["statutor"]        // pin with "statutor@0.2.0"
    }
    ```
 
-   then restart opencode (config is read at startup). File-copy fallback,
-   no npm needed: copy `statutor.ts` into your project's
-   `.opencode/plugins/`.
-3. Doctrine: OpenCode reads AGENTS.md natively — `statutor init` already covers
+   ```jsonc
+   // OpenCode 1.x — opencode.json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugin": ["statutor"]         // pin with "statutor@0.2.0"
+   }
+   ```
+
+   then restart opencode (config is read at startup).
+
+   File-copy fallback, no npm needed: copy `statutor.ts` into
+   `.opencode/plugins/` (project) or `~/.config/opencode/plugins/` (global),
+   where OpenCode 2.x loads `.ts` files directly. A 2.x **config entry** must
+   name a package or a directory; a bare `.ts` path is rejected with
+   `configured plugin path must be a directory`.
+3. Hook mapping — throwing blocks the tool call:
+
+   | Host | Registration | Tool name / arguments |
+   |---|---|---|
+   | OpenCode 2.x | `ctx.tool.hook("execute.before", …)` | `event.tool`, `event.input` |
+   | OpenCode 1.x | returned `"tool.execute.before"` hook | `input.tool`, `output.args` |
+
+   The harness vocabulary changed in 2.x, so the adapter normalizes both
+   generations to the kernel's names:
+
+   | Kernel | OpenCode 1.x | OpenCode 2.x |
+   |---|---|---|
+   | `bash` | `bash` → `command` | `shell` → `command` |
+   | `write` / `edit` | `filePath` | `path` |
+   | `apply_patch` | `apply_patch` → `command` | `patch` → `patchText` |
+
+   This matters more than the module shape: a plugin that loads cleanly but
+   only knows the 1.x names silently guards nothing. A live 2.0.32 session
+   confirmed the real ids (`shell`, `write`, `edit`, `patch`), and
+   `tests/test_adapter_opencode.py` feeds those shapes through both
+   registrations.
+
+   The kernel's exit code 2 is the only denial signal. A missing CLI, a spawn
+   failure, or an unparsable payload allows the call: hook mode fails open
+   (the repository's kernel rule), so a broken adapter never bricks a session.
+   The same test file covers the fail-open path. Verified 2026-10-20 against
+   OpenCode 2.0.32 with live tool calls: a frozen `write` was denied, a
+   `shell` redirect naming a governed file was denied, and an ordinary write
+   passed. With no `.statutor.yaml` marker the guard stays silent.
+4. Doctrine: OpenCode reads AGENTS.md natively — `statutor init` already covers
    the constitution. Optionally inject the condensed doctrine from
-   `skills/statutor/SKILL.md` via the `experimental.chat.system.transform` hook.
-4. Backstop: install the git floor (see adapters/git/). Not because of
+   `skills/statutor/SKILL.md` via the 2.x `ctx.session.hook("context", …)`
+   (`event.system.push(...)`); on 1.x the same job used
+   `experimental.chat.system.transform`.
+5. Backstop: install the git floor (see adapters/git/). Not because of
    subagents — verified against opencode
    [v1.18.21](https://github.com/anomalyco/opencode/releases/tag/v1.18.21)
    (released 2026-08-21; checked 2026-08-23), subagent tool calls DO fire
@@ -32,24 +81,28 @@
    [sst/opencode#5894](https://github.com/anomalyco/opencode/issues/5894)
    was a misdiagnosis — the subagent had run grep/glob via the `bash`
    tool, so the hook correctly fired with `tool: "bash"` — and was closed
-   by the stale bot on 2026-04-15, never by a fix.
+   by the stale bot on 2026-04-15, never by a fix. That check was made on the
+   1.x hook surface; re-verify subagent coverage on 2.x before relying on it
+   alone.
 
-   The floor is still recommended for gaps the `tool.execute.before`
-   allowlist in `statutor.ts` cannot close:
+   The floor is still recommended for gaps the `tool.execute.before` /
+   `execute.before` allowlist in `statutor.ts` cannot close:
    - MCP tools: their ids are server-namespaced, so name-based filtering
      never matches them.
    - Partial-diff blind spots: an apply_patch Update File's required
      sections cannot be verified from a partial diff, and its resulting
      line count is only estimated from the on-disk file plus adds-minus-
      dels — the floor judges the final staged blob exactly.
-   - No agent identity: the hook input is only
-     `{ tool, sessionID, callID }` — a plugin can't tell primary agent
-     from subagent, only correlate by `sessionID`.
+   - No agent identity: the 1.x hook input is only
+     `{ tool, sessionID, callID }`, and the 2.x event adds `agent` and
+     `messageID` but no primary/subagent role — correlate by `sessionID`
+     instead.
 
-   `apply_patch` itself is covered in-loop since T-0011: the allowlist
-   includes it and the kernel parses the `*** Begin Patch` envelope
-   (frozen paths, Delete File of governed records, append-only deletions,
-   and cap/sections on Add File).
+   Patch tooling is covered in-loop: since T-0011 the kernel parses the
+   `*** Begin Patch` envelope (frozen paths, Delete File of governed records,
+   append-only deletions, and cap/sections on Add File). On 2.x that envelope
+   arrives as the `patch` tool's `patchText`; the adapter maps it to the
+   kernel's `apply_patch` shape.
 
 ## Optional global user layer (v0.4)
 

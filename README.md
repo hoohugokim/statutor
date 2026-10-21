@@ -54,17 +54,19 @@ archive exists (D-0016).
 |---|---|---|
 | Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash\|apply_patch` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
 | Google Antigravity (`adapters/antigravity/`) | PreToolUse (`run_command\|write_to_file\|replace_file_content`) → `statutor hook`; Stop → `statutor hook --stop` | full in-loop + drift surfacing |
-| OpenCode (`adapters/opencode/statutor.ts`) | `tool.execute.before` → `statutor check --if-ledger` | in-loop (write/edit/bash)¹ |
+| OpenCode (`adapters/opencode/statutor.ts`) | 2.x `ctx.tool.hook("execute.before")`, 1.x `tool.execute.before` → `statutor check --if-ledger` | in-loop (shell/write/edit/patch)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |
 | native (`crates/statutor/`) | `statutor-staged`, conformance-gated ≡ Python | local staged floor without Python |
 | Custom harnesses (`statutor check`, or import `validate`) | embed in your own tool dispatch | full in-loop |
 
-¹ in-loop for write/edit/bash/apply_patch; the kernel parses apply_patch
-envelopes (T-0011), with two partial-diff blind spots: required sections
+¹ in-loop for OpenCode 2.x `shell`/`write`/`edit`/`patch` and 1.x
+`bash`/`write`/`edit`/`apply_patch`; the kernel parses patch envelopes
+(T-0011), with two partial-diff blind spots: required sections
 on an Update File and server-namespaced MCP tool ids — the git floor
 covers both. Subagent tool calls
-DO fire plugin hooks (verified opencode v1.18.21, 2026-08-21); the
+DO fire plugin hooks (verified on the 1.x hook surface, opencode v1.18.21,
+2026-08-21); the
 opposite claim (sst/opencode#5894) was a misdiagnosis, stale-closed
 2026-04-15.
 ² Codex hooks are on by default since rust-v0.124.0 (2026-04-23) — the old

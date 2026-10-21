@@ -103,7 +103,7 @@ def test_package_metadata_is_explicit_and_versioned() -> None:
     assert locked is not None and locked.group(1) == cargo_version
 
     npm_manifest = json.loads((NPM_PACKAGE / "package.json").read_text())
-    assert npm_manifest["version"] == "0.1.1"
+    assert npm_manifest["version"] == "0.2.0"
     assert npm_manifest["files"] == NPM_FILES
     lifecycle_scripts = {
         "prepublish",

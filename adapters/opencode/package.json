@@ -1,7 +1,7 @@
 {
   "name": "statutor",
-  "version": "0.1.1",
-  "description": "OpenCode enforcement adapter for statutor, the typed project-ledger framework for agentic repos. In-loop mutation-policy checks via the Python kernel CLI (pip install statutor).",
+  "version": "0.2.0",
+  "description": "OpenCode enforcement adapter for statutor, the typed project-ledger framework for agentic repos. One file for the OpenCode 2.x (setup) and 1.x (server) plugin APIs; in-loop mutation-policy checks via the Python kernel CLI (pip install statutor).",
   "license": "MIT",
   "type": "module",
   "main": "statutor.ts",

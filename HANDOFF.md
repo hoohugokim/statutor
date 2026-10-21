@@ -1,14 +1,14 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-21 (UTC) by 15 documentation/package/release checks, independent editorial review, GitHub rendering, and desktop/narrow layout measurements
+last_verified: 2026-10-21 (UTC) by all PR CI, 15 focused checks, independent editorial review, public GitHub rendering/file hashes, and desktop/narrow layout measurements
 last_worker: codex
 last_machine: unknown
-handoff_id: 57e014efb00e443187d60ce57339a5a0
-supersedes: f825979d18e44892bc8645f473f1f1da
+handoff_id: b41b8ad341034c5c85c3756a1bb00974
+supersedes: 57e014efb00e443187d60ce57339a5a0
 
 ## Goal
-Publish the README redesign approved by the human (T-0055).
+Completed the README redesign approved by the human (T-0055).
 
 ## Last verified state
 - README is 144 lines, with a compact masthead, badges, navigation, example,
@@ -23,9 +23,10 @@ Publish the README redesign approved by the human (T-0055).
   npm/Cargo payload audits. Runtime code, versions, and policy are unchanged.
 - Hardened release remains Python/plugins 0.7.4, npm 0.2.0, and crate 0.1.2.
   PR #2/tag publication and public package verification remain complete.
+- PR #3 merged as d0a3bd2; public README, guides, logo, badges, and navigation verified.
 
 ## Next action
-Publish the documentation branch, verify CI, merge, and check remote assets.
+No documentation work remains. Select the next milestone with the human.
 
 ## Gotchas
 - CLI installation and project initialization do not register agent hooks.

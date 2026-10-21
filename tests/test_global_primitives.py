@@ -132,6 +132,70 @@ def test_atomic_replacement_cannot_follow_a_parent_retarget_during_cas(
     assert global_layer.fingerprint(foreign).token == foreign_before
 
 
+@pytest.mark.parametrize("kind", ["file", "tree"])
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("external_edit", [False, True])
+def test_post_replacement_parent_retarget_rolls_back_only_its_own_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    kind: str, present: bool, external_edit: bool,
+) -> None:
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    parent = tmp_path / "parent"
+    parent.symlink_to(physical, target_is_directory=True)
+    target = parent / "target"
+    physical_target = physical / "target"
+    if present:
+        if kind == "file":
+            target.write_text("original")
+            target.chmod(0o640)
+        else:
+            target.mkdir()
+            (target / "payload").write_text("original")
+    before = global_layer.fingerprint(physical_target).token
+    source = tmp_path / "source"
+    if kind == "tree":
+        source.mkdir()
+        (source / "payload").write_text("updated")
+    foreign = tmp_path / "foreign"
+    shutil.copytree(physical, foreign)
+    foreign_before = global_layer.fingerprint(foreign).token
+    replace = global_layer.os.replace
+    fired = False
+
+    def retarget_after_replace(src, dst):
+        nonlocal fired
+        result = replace(src, dst)
+        if Path(dst) == physical_target and not fired:
+            fired = True
+            parent.unlink()
+            parent.symlink_to(foreign, target_is_directory=True)
+            if external_edit:
+                changed = (physical_target if kind == "file"
+                           else physical_target / "payload")
+                changed.write_text("external")
+        return result
+
+    monkeypatch.setattr(global_layer.os, "replace", retarget_after_replace)
+    with pytest.raises(global_layer.ConcurrentChange):
+        if kind == "file":
+            global_layer.atomic_write_bytes(target, b"updated", expected=before)
+        else:
+            global_layer.atomic_replace_tree(target, source, expected=before)
+    assert fired
+    assert global_layer.fingerprint(foreign).token == foreign_before
+    if external_edit:
+        changed = physical_target if kind == "file" else physical_target / "payload"
+        assert changed.read_text() == "external"
+        if present:
+            backups = list(physical.glob(".target.statutor-old-*"))
+            assert len(backups) == 1
+            assert global_layer.fingerprint(backups[0]).token == before
+    else:
+        assert global_layer.fingerprint(physical_target).token == before
+        assert not list(physical.glob(".target.statutor-old-*"))
+
+
 def test_versioned_config_and_state_schemas() -> None:
     config = global_layer.default_config()
     state = global_layer.default_state()

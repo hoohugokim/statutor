@@ -310,3 +310,42 @@ def test_instruction_install_and_restore_support_a_stable_symlink_parent(
     lifecycle.uninstall_instructions(roots, hosts=["codex"])
     assert target.parent.is_symlink()
     assert not (real_parent / target.name).exists()
+
+
+def test_instruction_post_replace_identity_failure_restores_target_and_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roots = _roots(tmp_path)
+    lifecycle.global_init(roots)
+    target = lifecycle.instruction_target(roots, "codex")
+    target.parent.parent.mkdir(parents=True)
+    physical = tmp_path / "physical-codex"
+    physical.mkdir()
+    target.parent.symlink_to(physical, target_is_directory=True)
+    lifecycle.apply_instructions(roots, hosts=["codex"])
+    original = substrate.fingerprint(physical / target.name).token
+    foreign = tmp_path / "foreign-codex"
+    shutil.copytree(physical, foreign)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_path = Path(roots.state_root, "global-state.json")
+    state_before = state_path.read_bytes()
+    Path(roots.config_root, "AGENTS.md").write_text("# Updated common\n")
+    replace = substrate.os.replace
+    fired = False
+
+    def retarget_after_replace(src, dst):
+        nonlocal fired
+        result = replace(src, dst)
+        if Path(dst) == physical / target.name and not fired:
+            fired = True
+            target.parent.unlink()
+            target.parent.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(substrate.os, "replace", retarget_after_replace)
+    with pytest.raises(substrate.ConcurrentChange):
+        lifecycle.apply_instructions(roots, hosts=["codex"])
+    assert fired
+    assert substrate.fingerprint(physical / target.name).token == original
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert state_path.read_bytes() == state_before

@@ -110,6 +110,20 @@ def test_batch_tool_is_registered() -> None:
     assert "multi_replace_file_content" in matcher.split("|")
 
 
+def test_batch_append_preserves_crlf_content(tmp_path: Path) -> None:
+    path = tmp_path / "DECISIONS.md"
+    original = b"settled\r\nsecond\r\n"
+    path.write_bytes(original)
+    reason = kernel.validate(
+        "multi_replace_file_content",
+        {"TargetFile": str(path), "ReplacementChunks": [
+            _batch_chunk("second", "second\r\nnew", 2, 2),
+        ]}, str(tmp_path),
+    )
+    assert reason is None
+    assert path.read_bytes() == original
+
+
 # --------------------------------------------------------------------------
 # 1. Payload & tool normalization
 # --------------------------------------------------------------------------

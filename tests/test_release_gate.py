@@ -20,11 +20,11 @@ SPEC.loader.exec_module(release_gate)
 
 def test_release_versions_are_explicit_and_compatible() -> None:
     assert release_gate.versions(ROOT) == {
-        "python": "0.7.3",
-        "plugin": "0.7.3",
-        "antigravity": "0.7.3",
+        "python": "0.7.4",
+        "plugin": "0.7.4",
+        "antigravity": "0.7.4",
         "npm": "0.2.0",
-        "cargo": "0.1.1",
+        "cargo": "0.1.2",
     }
 
 
@@ -44,7 +44,7 @@ def test_python_and_plugin_versions_must_match(tmp_path: Path) -> None:
     data = json.loads(plugin.read_text(encoding="utf-8"))
     data["version"] = "9.9.9"
     plugin.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="Python 0.7.3 != Claude plugin 9.9.9"):
+    with pytest.raises(RuntimeError, match="Python 0.7.4 != Claude plugin 9.9.9"):
         release_gate.versions(tmp_path)
 
 
@@ -103,3 +103,38 @@ def test_candidate_snapshot_keeps_policy_baseline_and_excludes_untracked_files(
     )
     assert result.returncode == 1
     assert "append-only" in result.stdout
+
+
+def test_source_gate_uses_original_exact_tree_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import conformance_scenarios as scenarios
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    scenarios.s52_exact_tree_receipt_authorizes_policy_change(repo)
+    policy = repo / ".statutor.yaml"
+    policy.write_bytes(policy.read_bytes().rstrip() + b"\n")
+    subprocess.run(["git", "add", ".statutor.yaml"], cwd=repo, check=True)
+    tree = subprocess.check_output(["git", "write-tree"], cwd=repo, text=True).strip()
+    subprocess.run([
+        sys.executable, str(ROOT / "core/statutor_core.py"), "trust", "approve", str(repo),
+        "--decision", "D-0015", "--reason", "release fixture", "--confirm-tree", tree,
+    ], check=True, capture_output=True)
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    monkeypatch.setattr(release_gate, "ROOT", repo)
+    release_gate._candidate_tree(snapshot)
+    (snapshot / "core").mkdir()
+    (snapshot / "core/statutor_core.py").write_bytes((ROOT / "core/statutor_core.py").read_bytes())
+    original_run = release_gate._run
+    floor_results = []
+
+    def run_floor_only(command, **kwargs):
+        if "staged" in command:
+            floor_results.append(original_run(command, **kwargs))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(release_gate, "_run", run_floor_only)
+    release_gate._verify_source(snapshot, tmp_path)
+    assert len(floor_results) == 1

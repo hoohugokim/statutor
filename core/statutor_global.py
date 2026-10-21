@@ -496,6 +496,38 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
+def _rollback_replacement(
+    target: Path, installed_token: str,
+    previous: Path | None, previous_token: str,
+) -> None:
+    try:
+        installed = _require_expected(target, installed_token)
+        if previous is None:
+            _remove_artifact(target)
+        else:
+            _require_expected(previous, previous_token)
+            if installed.kind == "tree":
+                displaced = target.parent / (
+                    f".{target.name}.statutor-failed-{secrets.token_hex(8)}")
+                os.replace(target, displaced)
+                try:
+                    os.replace(previous, target)
+                except BaseException:
+                    if fingerprint(target).kind == ABSENT:
+                        _require_expected(displaced, installed_token)
+                        os.replace(displaced, target)
+                    raise
+                _remove_artifact(displaced)
+            else:
+                os.replace(previous, target)
+        _fsync_directory(target.parent)
+    except BaseException as error:
+        recovery = (f"; prior artifact retained at {previous}"
+                    if previous is not None and previous.exists() else "")
+        raise ConcurrentChange(
+            f"cannot safely roll back replacement of {target}{recovery}") from error
+
+
 def atomic_write_bytes(
     target: Path,
     content: bytes,
@@ -515,20 +547,45 @@ def atomic_write_bytes(
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.statutor-", dir=target.parent)
     temporary = Path(temporary_name)
+    previous: Path | None = None
+    installed_token: str | None = None
+    keep_previous = False
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temporary, mode)
+        if current.kind == "file":
+            prior_descriptor, prior_name = tempfile.mkstemp(
+                prefix=f".{target.name}.statutor-old-", dir=target.parent)
+            previous = Path(prior_name)
+            with os.fdopen(prior_descriptor, "wb") as handle:
+                handle.write(target.read_bytes())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(previous, current.mode or 0o600)
+            _require_expected(previous, expected)
         _require_expected(target, expected)
         identity.require()
+        replacement_token = fingerprint(temporary).token
         os.replace(temporary, target)
+        installed_token = replacement_token
         _fsync_directory(target.parent)
         identity.require()
+    except BaseException:
+        if installed_token is not None:
+            try:
+                _rollback_replacement(target, installed_token, previous, expected)
+            except BaseException:
+                keep_previous = True
+                raise
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()
+        if previous is not None and not keep_previous:
+            _remove_artifact(previous)
     return fingerprint(target)
 
 
@@ -604,29 +661,32 @@ def atomic_replace_tree(
     temporary.rmdir()
     old = target.parent / f".{target.name}.statutor-old-{secrets.token_hex(8)}"
     moved_old = False
+    installed_token: str | None = None
     try:
         _copy_safe_tree(source, temporary)
         _require_expected(target, expected)
         identity.require()
+        replacement_token = fingerprint(temporary).token
         if current.kind == "tree":
             os.replace(target, old)
             moved_old = True
-        try:
-            os.replace(temporary, target)
-        except BaseException:
-            if moved_old and not target.exists() and old.exists():
-                os.replace(old, target)
-                moved_old = False
-            raise
+        os.replace(temporary, target)
+        installed_token = replacement_token
         _fsync_directory(target.parent)
         identity.require()
+    except BaseException:
+        if installed_token is not None or moved_old:
+            _rollback_replacement(
+                target, installed_token or ABSENT,
+                old if moved_old else None, expected)
+            moved_old = False
+        raise
+    else:
         if moved_old:
-            shutil.rmtree(old)
+            _remove_artifact(old)
             moved_old = False
     finally:
         _remove_artifact(temporary)
-        if moved_old:
-            _remove_artifact(old)
     return fingerprint(target)
 
 

@@ -1,15 +1,15 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-21 (UTC) by exact-index gate at ab454d5 (769 passed, zero skips), seven Rust tests, artifact audits, native probes, and independent reviews
+last_verified: 2026-10-21 (UTC) by release/tag CI, exact-index gate (769 passed, zero skips), registry payload comparisons, clean installs, and runtime smoke
 last_worker: codex
 last_machine: unknown
-handoff_id: b2bb593f0c7b485b814379cf546642cd
-supersedes: 9785fb98991890e23190f9fc76744a28
+handoff_id: f825979d18e44892bc8645f473f1f1da
+supersedes: b2bb593f0c7b485b814379cf546642cd
 
 ## Goal
-Release hardened Python/plugins 0.7.4, npm adapter 0.2.0, and crate 0.1.2
-(D-0029, T-0049..T-0054), following the v0.7.3 audit.
+Completed hardened Python/plugins 0.7.4, npm adapter 0.2.0, and crate 0.1.2
+(D-0029, T-0049..T-0054), following the v0.7.3 audit. All channels verified.
 
 ## Last verified state
 - Floor preserves worktree, Git mode, strict policy, glob, and state identity.
@@ -22,17 +22,17 @@ Release hardened Python/plugins 0.7.4, npm adapter 0.2.0, and crate 0.1.2
   Completed specifications moved unchanged into plans/archive.
 - Current fake-profile probes: Claude 2.1.296, Codex 0.162.1, OpenCode 2.1.1.
   Rust 1.75 release build, seven unit tests, and conformance pass.
+- PR #2 merged as 0572042; tag v0.7.4 CI and PyPI publisher both passed.
+- Public payloads match the tag; registry installs and hook tests pass. GitHub has all four artifacts.
 
 ## Next action
-Push the reviewed release PR, verify its exact-revision checks, then publish
-through GitHub, PyPI, npm, and crates.io. Local artifact gate passed.
-npm login verified. Tracked runbook: docs/releasing.md.
+No release work remains. Select the next milestone with the human.
+Local CLI and Claude plugin are 0.7.4; restart Claude to load the plugin.
 
 ## Gotchas
 - Legacy worker sessions lack ledger scope: begin a new session to mutate.
 - Global probes prove only their reported native surfaces; Claude has no
   offline personal-skill catalog. Real-home global migration is separate.
-- Local CLI/plugin refresh follows verified publication; do not infer it.
 
 ## Do not touch
 Embedded TEMPLATES/INIT_PROFILES; frozen archive; DECISIONS.md header;

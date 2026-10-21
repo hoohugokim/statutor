@@ -2,10 +2,9 @@
 # ROADMAP
 
 ## Current milestone <!-- agent-visible -->
-v0.5.0 live on PyPI: exercise worker provenance in real sessions — begin,
-attributed rewrite, complete — refresh host pins (Claude 2.1.261 and Codex
-0.153.4 observed against 2.1.258 / 0.152.1 pins), and file only real
-findings as TASKS. Runbook: `notes/v0.5-release-guide.md`.
+v0.7.4 hardening: close the reproduced floor, global-ownership, adapter,
+and worker-provenance defects, then verify and publish each distribution.
+T-0049 through T-0054 track completion. Release runbook: `docs/releasing.md`.
 
 ## Next milestone (human context, agents ignore)
 Undecided. Candidates: live-binary E2E automation, host role-signal watch

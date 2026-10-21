@@ -14,7 +14,7 @@ This is not a port of Statutor. The policy kernel stays canonical in
 Python (`core/statutor_core.py`); this crate is a narrow, deliberately
 dumb twin whose *existence license* is continuous behavioral equivalence:
 [`tests/test_conformance_rust.py`](../../tests/test_conformance_rust.py)
-runs 52 scenario repos through both implementations and fails CI on any
+runs shared scenario repos and focused parity cases through both implementations and fails CI on any
 divergence in exit code or output bytes (DECISIONS.md, D-0014). Interactive
 surfaces — hook mode, `check`, bash guard, apply_patch parsing, init — do
 not exist here and must never: they belong to the harnesses that have them.

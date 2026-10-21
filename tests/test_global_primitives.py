@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -58,6 +59,141 @@ def test_resolve_windows_defaults_are_explicit(tmp_path: Path) -> None:
         home=tmp_path / "User", environ=env, platform="nt")
     assert roots.config_root == str(tmp_path / "Roaming/statutor")
     assert roots.state_root == str(tmp_path / "Local/statutor/state")
+
+
+@pytest.mark.parametrize("original_kind", ["absent", "file", "tree", "symlink"])
+def test_restore_refuses_a_retargeted_backup_parent(
+    tmp_path: Path, original_kind: str,
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    target = parent / "target"
+    if original_kind == "file":
+        target.write_text("original")
+    elif original_kind == "tree":
+        target.mkdir()
+        (target / "payload").write_text("original")
+    elif original_kind == "symlink":
+        target.symlink_to("original")
+    manifest, _ = global_layer.create_backup(
+        tmp_path / "state", target, operation_id="restore", artifact_id="target")
+    global_layer._remove_artifact(target)
+    target.write_text("installed")
+    token = global_layer.fingerprint(target).token
+    original_parent = tmp_path / "original-parent"
+    foreign = tmp_path / "foreign-parent"
+    parent.rename(original_parent)
+    shutil.copytree(original_parent, foreign)
+    parent.symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(global_layer.ConcurrentChange):
+        global_layer.restore_backup(manifest, target, expected_current=token)
+    assert (foreign / "target").read_text() == "installed"
+
+
+@pytest.mark.parametrize("kind", ["file", "tree"])
+def test_atomic_replacement_cannot_follow_a_parent_retarget_during_cas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    parent = tmp_path / "parent"
+    parent.symlink_to(real_parent, target_is_directory=True)
+    target = parent / "target"
+    source = tmp_path / "source"
+    if kind == "file":
+        target.write_text("installed")
+    else:
+        target.mkdir()
+        (target / "payload").write_text("installed")
+        source.mkdir()
+        (source / "payload").write_text("updated")
+    foreign = tmp_path / "foreign-parent"
+    shutil.copytree(real_parent, foreign)
+    foreign_before = global_layer.fingerprint(foreign).token
+    expected = global_layer.fingerprint(target).token
+    real_require = global_layer._require_expected
+    checks = 0
+
+    def retarget_before_replace(path, token):
+        nonlocal checks
+        current = real_require(path, token)
+        checks += 1
+        if checks == 2:
+            parent.unlink()
+            parent.symlink_to(foreign, target_is_directory=True)
+        return current
+
+    monkeypatch.setattr(global_layer, "_require_expected", retarget_before_replace)
+    with pytest.raises(global_layer.ConcurrentChange):
+        if kind == "file":
+            global_layer.atomic_write_bytes(target, b"updated", expected=expected)
+        else:
+            global_layer.atomic_replace_tree(target, source, expected=expected)
+    assert global_layer.fingerprint(foreign).token == foreign_before
+
+
+@pytest.mark.parametrize("kind", ["file", "tree"])
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("external_edit", [False, True])
+def test_post_replacement_parent_retarget_rolls_back_only_its_own_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    kind: str, present: bool, external_edit: bool,
+) -> None:
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    parent = tmp_path / "parent"
+    parent.symlink_to(physical, target_is_directory=True)
+    target = parent / "target"
+    physical_target = physical / "target"
+    if present:
+        if kind == "file":
+            target.write_text("original")
+            target.chmod(0o640)
+        else:
+            target.mkdir()
+            (target / "payload").write_text("original")
+    before = global_layer.fingerprint(physical_target).token
+    source = tmp_path / "source"
+    if kind == "tree":
+        source.mkdir()
+        (source / "payload").write_text("updated")
+    foreign = tmp_path / "foreign"
+    shutil.copytree(physical, foreign)
+    foreign_before = global_layer.fingerprint(foreign).token
+    replace = global_layer.os.replace
+    fired = False
+
+    def retarget_after_replace(src, dst):
+        nonlocal fired
+        result = replace(src, dst)
+        if Path(dst) == physical_target and not fired:
+            fired = True
+            parent.unlink()
+            parent.symlink_to(foreign, target_is_directory=True)
+            if external_edit:
+                changed = (physical_target if kind == "file"
+                           else physical_target / "payload")
+                changed.write_text("external")
+        return result
+
+    monkeypatch.setattr(global_layer.os, "replace", retarget_after_replace)
+    with pytest.raises(global_layer.ConcurrentChange):
+        if kind == "file":
+            global_layer.atomic_write_bytes(target, b"updated", expected=before)
+        else:
+            global_layer.atomic_replace_tree(target, source, expected=before)
+    assert fired
+    assert global_layer.fingerprint(foreign).token == foreign_before
+    if external_edit:
+        changed = physical_target if kind == "file" else physical_target / "payload"
+        assert changed.read_text() == "external"
+        if present:
+            backups = list(physical.glob(".target.statutor-old-*"))
+            assert len(backups) == 1
+            assert global_layer.fingerprint(backups[0]).token == before
+    else:
+        assert global_layer.fingerprint(physical_target).token == before
+        assert not list(physical.glob(".target.statutor-old-*"))
 
 
 def test_versioned_config_and_state_schemas() -> None:

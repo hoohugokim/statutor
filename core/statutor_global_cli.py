@@ -148,9 +148,9 @@ def instruction_plan(
         else:
             substrate.validate_artifact_receipt(receipt)
             assert isinstance(receipt, dict)
-            if current.token != receipt["installed_token"]:
+            reason = substrate.managed_target_reason(target, receipt, current)
+            if reason:
                 action = "conflict"
-                reason = "managed target is missing or modified"
             elif current.token == desired_token:
                 action = "noop"
                 reason = None
@@ -159,9 +159,13 @@ def instruction_plan(
                 reason = None
         item_warnings = _warnings(roots, host, action)
         warnings.extend(item_warnings)
+        parent = (Path(str(receipt["target_real"])).parent
+                  if isinstance(receipt, dict)
+                  else target.parent.resolve(strict=False))
         items.append({
             "host": host,
             "target": str(target),
+            "target_parent": str(parent),
             "current_token": current.token,
             "desired_digest": desired_digest,
             "desired_token": desired_token,
@@ -267,6 +271,7 @@ def _receipt(
     host: str,
     common_path: Path,
     target: Path,
+    target_parent: str,
     desired_digest: str,
     installed_token: str,
     backup_id: str,
@@ -278,7 +283,8 @@ def _receipt(
         "source_logical": str(common_path.absolute()),
         "source_real": str(common_path.resolve(strict=True)),
         "target_logical": str(target.absolute()),
-        "target_real": str(target.resolve(strict=True)),
+        "target_real": str(substrate.target_identity(
+            target, expected_parent=target_parent).physical_target),
         "source_digest": desired_digest,
         "installed_token": installed_token,
         "backup_id": backup_id,
@@ -325,18 +331,25 @@ def apply_instructions(
                 desired = render_instruction(
                     common_path.read_bytes(), overlay_path.read_bytes(), host)
                 before_receipt = artifacts.get(f"instruction-{host}")
+                if isinstance(before_receipt, dict):
+                    reason = substrate.managed_target_reason(target, before_receipt)
+                    if reason:
+                        raise substrate.ConcurrentChange(reason)
+                parent = str(item["target_parent"])
                 backup_key = f"{operation_id}.{host}"
                 manifest_path, _ = substrate.create_backup(
                     state_root,
                     target,
                     operation_id=operation_id,
                     artifact_id=host,
+                    expected_parent=parent,
                 )
                 result = substrate.atomic_write_bytes(
                     target,
                     desired,
                     expected=str(item["current_token"]),
                     mode=0o600,
+                    expected_parent=parent,
                 )
                 installed.append((target, manifest_path, result.token))
                 initial_backup = (
@@ -348,6 +361,7 @@ def apply_instructions(
                     host=host,
                     common_path=common_path,
                     target=target,
+                    target_parent=parent,
                     desired_digest=str(item["desired_digest"]),
                     installed_token=result.token,
                     backup_id=initial_backup,
@@ -412,8 +426,10 @@ def adoption_plan(
         "operation": "instruction-adopt",
         "host": host,
         "target": str(target),
+        "target_parent": str(target.parent.resolve(strict=False)),
         "current_token": current.token,
         "overlay": str(overlay_path),
+        "overlay_parent": str(overlay_path.parent.resolve(strict=False)),
         "desired_digest": substrate.content_digest(desired),
         "original_bytes_preserved": original in desired,
         "warnings": warnings,
@@ -432,10 +448,14 @@ def adopt_instruction(roots: substrate.ResolvedRoots, host: str) -> dict[str, ob
         if f"instruction-{host}" in artifacts:
             raise substrate.GlobalError(f"{host} instruction target is already managed")
         target = instruction_target(roots, host)
+        parent = str(preview["target_parent"])
+        substrate.target_identity(target, expected_parent=parent)
         current = substrate.fingerprint(target)
         if current.kind != "file":
             raise substrate.GlobalError("adoption requires an existing regular file")
         common_path, overlay_path = _source_paths(roots, config, host)
+        overlay_parent = str(preview["overlay_parent"])
+        substrate.target_identity(overlay_path, expected_parent=overlay_parent)
         overlay = substrate.fingerprint(overlay_path)
         if overlay.kind != "file" or overlay_path.read_bytes() != b"":
             raise substrate.GlobalError("adoption requires an empty host overlay")
@@ -450,22 +470,26 @@ def adopt_instruction(roots: substrate.ResolvedRoots, host: str) -> dict[str, ob
         journal, _ = substrate.update_journal(
             journal_path, journal, status="applying")
         target_manifest, _ = substrate.create_backup(
-            state_root, target, operation_id=operation_id, artifact_id=host)
+            state_root, target, operation_id=operation_id, artifact_id=host,
+            expected_parent=parent)
         overlay_manifest, _ = substrate.create_backup(
             state_root, overlay_path, operation_id=operation_id,
             artifact_id=f"{host}-overlay",
+            expected_parent=overlay_parent,
         )
         overlay_result: substrate.Fingerprint | None = None
         installed: substrate.Fingerprint | None = None
         state_committed = False
         try:
             overlay_result = substrate.atomic_write_bytes(
-                overlay_path, original, expected=overlay.token)
+                overlay_path, original, expected=overlay.token,
+                expected_parent=overlay_parent)
             desired = render_instruction(common_path.read_bytes(), original, host)
             if original not in desired:
                 raise substrate.GlobalError("adoption projection lost original bytes")
             installed = substrate.atomic_write_bytes(
-                target, desired, expected=current.token, mode=0o600)
+                target, desired, expected=current.token, mode=0o600,
+                expected_parent=parent)
             backup_key = f"{operation_id}.{host}"
             updated = {
                 **state,
@@ -476,6 +500,7 @@ def adopt_instruction(roots: substrate.ResolvedRoots, host: str) -> dict[str, ob
                         host=host,
                         common_path=common_path,
                         target=target,
+                        target_parent=parent,
                         desired_digest=substrate.content_digest(desired),
                         installed_token=installed.token,
                         backup_id=backup_key,
@@ -540,8 +565,9 @@ def uninstall_instructions(
             assert isinstance(receipt, dict)
             target = instruction_target(roots, host)
             current = substrate.fingerprint(target)
-            if current.token != receipt["installed_token"]:
-                raise substrate.GlobalError(f"refusing to uninstall modified {host} target")
+            reason = substrate.managed_target_reason(target, receipt, current)
+            if reason:
+                raise substrate.GlobalError(f"refusing to uninstall {host}: {reason}")
             manifest_relative = backups.get(str(receipt["backup_id"]))
             if not isinstance(manifest_relative, str):
                 raise substrate.GlobalError(f"missing initial backup for {host}")
@@ -559,12 +585,16 @@ def uninstall_instructions(
         rollback: list[tuple[Path, Path, str]] = []
         state_committed = False
         try:
-            for host, target, _, original_manifest, current_token in candidates:
+            for host, target, receipt, original_manifest, current_token in candidates:
+                reason = substrate.managed_target_reason(target, receipt)
+                if reason:
+                    raise substrate.ConcurrentChange(reason)
                 rollback_manifest, _ = substrate.create_backup(
                     state_root,
                     target,
                     operation_id=operation_id,
                     artifact_id=f"rollback-{host}",
+                    expected_parent=Path(str(receipt["target_real"])).parent,
                 )
                 result = substrate.restore_backup(
                     original_manifest, target, expected_current=current_token)
@@ -614,8 +644,8 @@ def uninstall_plan(
         receipt = artifacts.get(f"instruction-{host}")
         if receipt is None:
             action, reason = "noop", None
-        elif current.token != receipt["installed_token"]:
-            action, reason = "conflict", "managed target is missing or modified"
+        elif reason := substrate.managed_target_reason(target, receipt, current):
+            action = "conflict"
         elif str(receipt["backup_id"]) not in backups:
             action, reason = "conflict", "initial backup is missing"
         else:

@@ -727,7 +727,12 @@ def global_inventory(
             for item in skills["items"]
             if item["scope"] in {"portable", "claude"}
         }
-        for artifact in sorted(set(artifacts) - observed):
+        unobserved = set(artifacts) - observed
+        if hosts:
+            unobserved -= {
+                f"instruction-{host}" for host in substrate.HOSTS if host not in hosts
+            }
+        for artifact in sorted(unobserved):
             _diagnostic(
                 diagnostics, "error", "orphaned-receipt",
                 f"receipt has no corresponding inventoried artifact: {artifact}")

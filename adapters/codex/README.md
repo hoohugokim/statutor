@@ -85,7 +85,7 @@ admin/system/plugin content, or a foreign skill lock.
 Use `statutor global init`, review `statutor global plan --json`, and apply
 only the selected host with `statutor global apply --host codex`. The opt-in
 release probe `python scripts/global_e2e.py --host codex --json` was verified
-against local Codex CLI 0.151.0 using `codex debug prompt-input` under a
+against local Codex CLI 0.162.1 using `codex debug prompt-input` under a
 temporary profile. It performs no model or network request and never points
 Codex at the caller's real home.
 

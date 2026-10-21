@@ -199,3 +199,244 @@ def test_colored_gitconfig_diverges_nothing(tmp_path: Path, staged_bin: Path,
 
     assert py.returncode == rs.returncode == 1
     assert py.stdout == rs.stdout != ""
+
+
+@git_required
+@pytest.mark.parametrize("policy", [
+    b"{governed: []}\n",
+    b"governed: [{pattern: NOTES.md, policy: frozen}]\n",
+    b"governed: []\n---\ngoverned: []\n",
+    b"governed: &rules []\n",
+    b"governed: []\ngoverned: []\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    policy: state\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: []\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    required_sections: [one]\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    max_lines: 0x10\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    max_lines: 1_000\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    max_lines: true\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    soft_max_lines: -1\n",
+    b"governed:\n  - pattern: NOTES.md\n    policy: frozen\n    required_sections:\n      - \"\"\n",
+    b"governed:\n  - pattern: \"\\x41\"\n    policy: frozen\n",
+    b"governed:\n  - pattern: \"\\ud800\"\n    policy: frozen\n",
+    b"governed:\n  - pattern: \"\\udfff\"\n    policy: frozen\n",
+    b"governed:\n  - pattern: \xff.md\n    policy: frozen\n",
+])
+def test_unsupported_policy_syntax_fails_closed_in_both_floors(
+        tmp_path: Path, staged_bin: Path, policy: bytes) -> None:
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_bytes(policy)
+    cs.git(tmp_path, "add", ".statutor.yaml")
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 1
+    assert py.stdout == rs.stdout
+    assert "invalid or unsupported Statutor policy" in py.stdout
+
+
+@git_required
+@pytest.mark.parametrize("policy", [
+    "bash_guard: TRUE\ngoverned: []\n",
+    "governed:\n  - pattern: 'true'\n    policy: frozen\n",
+    "governed:\n  - pattern: 'a''b.md'\n    policy: frozen # data\n",
+    'governed:\n  - pattern: "a\\u0023b.md"\n    policy: frozen\n',
+    'governed:\n  - pattern: NOTES.md\n    policy: constitution\n    max_lines: "01"\n',
+    'governed:\n  - pattern: NOTES.md\n    policy: constitution\n    max_lines: +0001\n',
+    "governed:\n  - pattern: NOTES.md\n    policy: constitution\n    max_lines: 999999999999999999999999\n",
+    "governed:\n  - pattern: NOTES.md\n    policy: constitution\n    max_lines: '１２'\n",
+    'governed:\n  - pattern: "\\ud83d\\ude00.md"\n    policy: frozen\n',
+])
+def test_supported_policy_scalars_match_canonical_parser(
+        tmp_path: Path, staged_bin: Path, policy: str) -> None:
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text(policy, encoding="utf-8")
+    cs.git(tmp_path, "add", ".statutor.yaml")
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 0, (py.stdout, rs.stdout)
+    assert py.stdout == rs.stdout == ""
+
+
+@git_required
+@pytest.mark.parametrize("name,mutation", [
+    (".statutor.yaml", "symlink"),
+    ("CLAUDE.md", "symlink"),
+    (".statutor.yaml", "executable"),
+    ("CLAUDE.md", "executable"),
+])
+def test_trust_root_mode_changes_require_exact_tree_approval(
+        tmp_path: Path, staged_bin: Path, name: str, mutation: str) -> None:
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text("governed: []\n")
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md")
+    cs.git(tmp_path, "add", "-A")
+    cs.git(tmp_path, "commit", "-qm", "base")
+    target = tmp_path / name
+    if mutation == "symlink":
+        body = target.read_text()
+        target.unlink()
+        target.symlink_to(body)
+        cs.git(tmp_path, "add", name)
+    else:
+        cs.git(tmp_path, "update-index", "--chmod=+x", name)
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 1
+    assert py.stdout == rs.stdout
+    assert "trust-root change requires" in py.stdout
+    tree = subprocess.check_output(["git", "write-tree"], cwd=tmp_path,
+                                   env=cs.GIT_ENV, text=True).strip()
+    approval = subprocess.run(
+        [sys.executable, str(KERNEL), "trust", "approve", str(tmp_path),
+         "--decision", "D-0015", "--reason", "mode transition regression",
+         "--confirm-tree", tree], capture_output=True, text=True, env=cs.GIT_ENV)
+    assert approval.returncode == 0, approval.stderr
+    assert _run_kernel(tmp_path).returncode == _run_rust(staged_bin, tmp_path).returncode == 0
+
+
+@git_required
+def test_nested_floor_and_trust_approval_use_complete_git_transaction(
+        tmp_path: Path, staged_bin: Path) -> None:
+    cs.init_repo(tmp_path)
+    policy = "governed:\n  - pattern: NOTES.md\n    policy: append_only\n"
+    (tmp_path / ".statutor.yaml").write_text(policy)
+    (tmp_path / "NOTES.md").write_text("original\n")
+    nested = tmp_path / "src"
+    nested.mkdir()
+    cs.git(tmp_path, "add", "-A")
+    cs.git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "NOTES.md").write_text("rewritten\n")
+    cs.git(tmp_path, "add", "NOTES.md")
+    for cwd in (tmp_path, nested):
+        py = _run_kernel(cwd)
+        rs = _run_rust(staged_bin, cwd)
+        assert py.returncode == rs.returncode == 1
+        assert py.stdout == rs.stdout
+        assert "append-only" in py.stdout
+    cs.git(tmp_path, "reset", "-q", "--hard")
+    (tmp_path / ".statutor.yaml").write_text(policy + "\n")
+    cs.git(tmp_path, "add", ".statutor.yaml")
+    tree = subprocess.check_output(["git", "write-tree"], cwd=tmp_path,
+                                   env=cs.GIT_ENV, text=True).strip()
+    approval = subprocess.run(
+        [sys.executable, str(KERNEL), "trust", "approve", "--decision", "D-0015",
+         "--reason", "nested invocation", "--confirm-tree", tree], cwd=nested,
+        env=cs.GIT_ENV, capture_output=True, text=True)
+    assert approval.returncode == 0, approval.stderr
+    assert _run_kernel(nested).returncode == _run_rust(staged_bin, nested).returncode == 0
+
+
+@git_required
+@pytest.mark.parametrize("pattern,name", [
+    ("[^a].md", "a.md"), ("[]a].md", "a.md"),
+    ("[!a].md", "b.md"), ("[a-b-c].md", "-.md"),
+    ("[!a].md", "[.md"), ("*?.md", "*.md"),
+    ("[b-a!].md", "a.md"),
+])
+def test_python_character_classes_protect_same_frozen_paths(
+        tmp_path: Path, staged_bin: Path, pattern: str, name: str) -> None:
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text(
+        f"governed:\n  - pattern: '{pattern}'\n    policy: frozen\n")
+    (tmp_path / name).write_text("original\n")
+    cs.git(tmp_path, "add", "-A")
+    cs.git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / name).write_text("changed\n")
+    cs.git(tmp_path, "add", "--", name)
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 1
+    assert py.stdout == rs.stdout
+    assert "frozen" in py.stdout
+
+
+@git_required
+@pytest.mark.parametrize("candidate", [
+    "- [x] T-0001\tupdated\n",
+    "- [ ] T-0001 one\n- [ ] T-0000 low\n- [ ] T-0000 different\n",
+    "- [ ] T-0001 one\n- [ ] T-0000 low\n- [ ] T-00000 lower\n",
+    "- [ ] T-0001 one\n- [ ] T-999999999999999999999999999999999999999 new\n",
+    "- [ ] T-0001 one\r\n- [ ] T-bad malformed\r\n",
+    "- [ ] T-0001 one\u2028- [ ] T-bad malformed\u2028",
+])
+def test_state_spacing_and_diagnostic_order_match_python(
+        tmp_path: Path, staged_bin: Path, candidate: str) -> None:
+    cs.base_ledger(tmp_path)
+    (tmp_path / "TASKS.md").write_text(candidate)
+    cs.git(tmp_path, "add", "TASKS.md")
+    py = _run_kernel(tmp_path)
+    for _ in range(5):
+        rs = _run_rust(staged_bin, tmp_path)
+        assert py.returncode == rs.returncode
+        assert py.stdout == rs.stdout
+
+
+@git_required
+def test_decimal_blocks_supported_by_canonical_python_match_rust(
+        tmp_path: Path, staged_bin: Path) -> None:
+    import unicodedata
+
+    starts = [point for point in range(sys.maxunicode + 1)
+              if unicodedata.category(chr(point)) == "Nd"
+              and unicodedata.decimal(chr(point)) == 0]
+    import statutor_core
+
+    assert set(starts) <= set(statutor_core._DECIMAL_STARTS)
+    starts = statutor_core._DECIMAL_STARTS
+    policy = "governed:\n" + "".join(
+        f"  - pattern: note-{index}.md\n    policy: constitution\n"
+        f"    max_lines: '{chr(start + 1)}{chr(start + 2)}'\n"
+        for index, start in enumerate(starts))
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text(policy)
+    cs.git(tmp_path, "add", ".statutor.yaml")
+    assert _run_kernel(tmp_path).returncode == _run_rust(staged_bin, tmp_path).returncode == 0
+    cs.git(tmp_path, "reset", "-q", "--hard")
+    (tmp_path / ".statutor.yaml").write_text(
+        "governed:\n  - pattern: TASKS.md\n    policy: state\n")
+    (tmp_path / "TASKS.md").write_text("".join(
+        "- [ ] T-" + chr(start) * 3 + chr(start+1) + " detail\n"
+        for start in starts))
+    cs.git(tmp_path, "add", ".statutor.yaml", "TASKS.md")
+    assert _run_kernel(tmp_path).returncode == _run_rust(staged_bin, tmp_path).returncode == 0
+
+
+@git_required
+def test_arbitrary_size_decimal_caps_and_state_ids_match(
+        tmp_path: Path, staged_bin: Path) -> None:
+    large = "9" * 5000
+    cs.init_repo(tmp_path)
+    (tmp_path / ".statutor.yaml").write_text(
+        "governed:\n  - pattern: TASKS.md\n    policy: state\n"
+        "  - pattern: NOTES.md\n    policy: constitution\n    max_lines: " + large + "\n")
+    (tmp_path / "TASKS.md").write_text(f"- [ ] T-{large} first\n")
+    cs.git(tmp_path, "add", "-A")
+    assert _run_kernel(tmp_path).returncode == _run_rust(staged_bin, tmp_path).returncode == 0
+    cs.git(tmp_path, "commit", "-qm", "large identities")
+    (tmp_path / "TASKS.md").write_text(
+        f"- [ ] T-{large} first\n- [ ] T-0000 invalid successor\n")
+    cs.git(tmp_path, "add", "TASKS.md")
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 1
+    assert py.stdout == rs.stdout
+    assert f"maximum T-{large}" in py.stdout
+
+
+@git_required
+@pytest.mark.skipif(os.name == "nt", reason="backslash is a separator on Windows")
+def test_literal_backslash_filename_keeps_python_policy_matching(
+        tmp_path: Path, staged_bin: Path) -> None:
+    cs.init_repo(tmp_path)
+    name = "docs\\NOTES.md"
+    (tmp_path / ".statutor.yaml").write_text(
+        f"governed:\n  - pattern: '{name}'\n    policy: frozen\n")
+    (tmp_path / name).write_text("original\n")
+    cs.git(tmp_path, "add", "-A")
+    cs.git(tmp_path, "commit", "-qm", "literal path")
+    (tmp_path / name).write_text("changed\n")
+    cs.git(tmp_path, "add", "--", name)
+    py = _run_kernel(tmp_path)
+    rs = _run_rust(staged_bin, tmp_path)
+    assert py.returncode == rs.returncode == 1
+    assert py.stdout == rs.stdout
+    assert "frozen" in py.stdout

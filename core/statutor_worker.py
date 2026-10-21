@@ -355,7 +355,7 @@ def _resolve_worktree(cwd: str) -> str:
     top = _git_optional(cwd, "rev-parse", "--show-toplevel")
     if top:
         return os.path.realpath(os.path.abspath(top))
-    return os.path.realpath(os.path.abspath(cwd))
+    return os.path.realpath(_require_ledger(cwd))
 
 
 def _worktree_id(worktree_root: str) -> str:
@@ -453,16 +453,14 @@ def _read_handoff_text(ledger_root: str | None, cwd: str,
             return digest, content.decode("utf-8")
         except UnicodeDecodeError:
             return digest, None
-    raw = _git_bytes_optional(cwd, "show", f"{ref}:HANDOFF.md")
-    # NOTE: bare `git show REF:HANDOFF.md` resolves from the repo root, but a
-    # ledger may live in a subdirectory; fall back to the ledger-relative path.
-    if raw is None and ledger_root is not None:
+    relative = "HANDOFF.md"
+    if ledger_root is not None:
         try:
-            rel = os.path.relpath(os.path.join(ledger_root, "HANDOFF.md"),
-                                  _resolve_worktree(cwd))
+            relative = os.path.relpath(os.path.join(ledger_root, "HANDOFF.md"),
+                                       _resolve_worktree(cwd)).replace(os.sep, "/")
         except ValueError:
-            rel = "HANDOFF.md"
-        raw = _git_bytes_optional(cwd, "show", f"{ref}:{rel}")
+            return None, None
+    raw = _git_bytes_optional(cwd, "show", f"{ref}:{relative}")
     if raw is None:
         return None, None
     # Hash the exact blob bytes so worktree and ref digests agree even for
@@ -562,9 +560,17 @@ def validate_registry(data: object) -> dict[str, object]:
     if not isinstance(data["worktrees"], dict):
         raise WorkerError("worker registry worktrees must be an object")
     for wt_id, wt in data["worktrees"].items():
-        if not isinstance(wt, dict) or set(wt) != {
-                "worktree_root", "latest", "per_harness", "leases"}:
+        fields = {"worktree_root", "latest", "per_harness", "leases"}
+        if not isinstance(wt, dict) or set(wt) not in (
+                fields, fields | {"completed_by_ledger"}):
             raise WorkerError("worker registry has an invalid worktree entry")
+        completed_by_ledger = wt.get("completed_by_ledger", {})
+        if not isinstance(completed_by_ledger, dict):
+            raise WorkerError("completed_by_ledger must be an object")
+        for ledger_root, record in completed_by_ledger.items():
+            if not isinstance(ledger_root, str) or not os.path.isabs(ledger_root):
+                raise WorkerError("completed_by_ledger has an invalid ledger root")
+            _validate_record(record, "completed_by_ledger")
         latest = wt["latest"]
         if not isinstance(latest, dict) or set(latest) != {
                 "activity", "attempt", "mutation", "completed"}:
@@ -593,13 +599,18 @@ def validate_registry(data: object) -> dict[str, object]:
     if not isinstance(data["sessions"], dict):
         raise WorkerError("worker registry sessions must be an object")
     for sid, session in data["sessions"].items():
-        if not isinstance(session, dict) or set(session) != {
-                "session_id", "harness", "role", "origin_harness",
-                "machine_id", "machine_label", "worktree_id",
-                "worktree_root", "started_at", "expires_at",
-                "baseline_head", "baseline_handoff_digest",
-                "baseline_handoff_id", "status"}:
+        fields = {"session_id", "harness", "role", "origin_harness",
+                  "machine_id", "machine_label", "worktree_id",
+                  "worktree_root", "started_at", "expires_at",
+                  "baseline_head", "baseline_handoff_digest",
+                  "baseline_handoff_id", "status"}
+        if not isinstance(session, dict) or set(session) not in (
+                fields, fields | {"ledger_root"}):
             raise WorkerError("worker registry has an invalid session")
+        if "ledger_root" in session and (
+                not isinstance(session["ledger_root"], str)
+                or not os.path.isabs(session["ledger_root"])):
+            raise WorkerError("session has an invalid ledger root")
         if session["status"] not in ("active", "completed", "expired"):
             raise WorkerError("session has an invalid status")
     return data
@@ -619,8 +630,10 @@ def _ensure_worktree(registry: dict[str, object], wt_id: str,
     entry = worktrees.get(wt_id)
     if not isinstance(entry, dict):
         entry = {"worktree_root": wt_root, "latest": _empty_basis(),
-                 "per_harness": {}, "leases": []}
+                 "per_harness": {}, "leases": [], "completed_by_ledger": {}}
         worktrees[wt_id] = entry
+    else:
+        entry.setdefault("completed_by_ledger", {})
     return entry
 
 
@@ -742,7 +755,28 @@ def _require_ledger(cwd: str) -> str:
     if ledger is None:
         raise WorkerError("worker ingress requires a marked ledger "
                           "(.statutor.yaml); nothing changed")
-    return ledger
+    return os.path.realpath(ledger)
+
+
+def _require_session(registry: dict[str, object], session_id: str,
+                     worktree_root: str, ledger_root: str, *,
+                     harness: str | None = None) -> dict[str, object]:
+    sessions = registry["sessions"]
+    assert isinstance(sessions, dict)
+    session = sessions.get(session_id)
+    if not isinstance(session, dict):
+        raise WorkerError(f"unknown session: {session_id}")
+    if "ledger_root" not in session:
+        raise WorkerError("session has no recorded ledger scope; "
+                          "begin a new session before recording or completing")
+    if (session["worktree_id"] != _worktree_id(worktree_root)
+            or session["worktree_root"] != worktree_root):
+        raise WorkerError("session belongs to another worktree")
+    if session["ledger_root"] != ledger_root:
+        raise WorkerError("session belongs to another ledger")
+    if harness is not None and session["harness"] != harness:
+        raise WorkerError("session harness does not match the recording harness")
+    return session
 
 
 # --------------------------------------------------------------------------
@@ -772,7 +806,7 @@ def worker_begin(state_root: Path, cwd: str, *, harness: str,
         "session_id": sid, "harness": harness, "role": role,
         "origin_harness": origin_harness, "machine_id": machine["machine_id"],
         "machine_label": machine["label"], "worktree_id": wt_id,
-        "worktree_root": wt_root, "started_at": _iso(now),
+        "worktree_root": wt_root, "ledger_root": ledger, "started_at": _iso(now),
         "expires_at": _iso(now + LEASE_TTL), "baseline_head": head,
         # Diagnostic only: CAS binds handoff_id lineage (plus supersedes,
         # machine, worker), never the digest — every legitimate rewrite
@@ -847,11 +881,9 @@ def worker_record(state_root: Path, cwd: str, *, harness: str, event: str,
     if origin_harness not in HARNESSES:
         raise WorkerError(f"unsupported origin_harness: {origin_harness}")
     ledger = _require_ledger(cwd)
-    if event == "mutation" and harness in ("claude", "codex", "opencode", "grok"):
-        # PreToolUse/tool-before proves an attempt, never a confirmed
-        # mutation; automatic adapters must not record mutation directly.
-        raise WorkerError("automatic harnesses prove attempt, never mutation; "
-                          "mutation requires a post-success surface")
+    if event not in CAPABILITIES[harness]["proves"]:
+        raise WorkerError(f"{harness} cannot prove {event}; "
+                          "record only events supported by its capabilities")
     machine, _ = ensure_machine(state_root)
     project_id, derivation, display = _resolve_project(cwd)
     wt_root = _resolve_worktree(cwd)
@@ -862,29 +894,24 @@ def worker_record(state_root: Path, cwd: str, *, harness: str, event: str,
                                            display)
         _prune_expired(registry)
         sid = session_id
+        session = None
         if sid is not None:
-            sessions = registry["sessions"]
-            assert isinstance(sessions, dict)
-            if sid not in sessions:
-                raise WorkerError(f"unknown session: {sid}")
+            session = _require_session(registry, sid, wt_root, ledger,
+                                       harness=harness)
         else:
             sid = f"manual-{secrets.token_hex(8)}"
         record = _touch(registry, wt_id, wt_root, event=event, harness=harness,
                         role=role, origin_harness=origin_harness,
                         machine=machine, session_id=sid,
                         handoff_id=current_handoff if current_handoff else "none")
-        if session_id is not None:
-            sessions = registry["sessions"]
-            assert isinstance(sessions, dict)
-            session = sessions.get(session_id)
-            if isinstance(session, dict) and session.get("status") == "active":
-                session["expires_at"] = _iso(_now() + LEASE_TTL)
-                entry = _ensure_worktree(registry, wt_id, wt_root)
-                leases = entry["leases"]
-                assert isinstance(leases, list)
-                for lease in leases:
-                    if lease.get("session_id") == session_id:
-                        lease["expires_at"] = session["expires_at"]
+        if session is not None and session["status"] == "active":
+            session["expires_at"] = _iso(_now() + LEASE_TTL)
+            entry = _ensure_worktree(registry, wt_id, wt_root)
+            leases = entry["leases"]
+            assert isinstance(leases, list)
+            for lease in leases:
+                if lease.get("session_id") == session_id:
+                    lease["expires_at"] = session["expires_at"]
         _store(state_root, project_id, registry, expected)
     return {"schema_version": SCHEMA_VERSION, "scope": "machine-local",
             "operation": "worker-record", "project_id": project_id,
@@ -986,16 +1013,14 @@ def worker_complete(state_root: Path, cwd: str, *,
         registry, expected = _load_or_init(state_root, project_id, derivation,
                                            display)
         _prune_expired(registry)
-        sessions = registry["sessions"]
-        assert isinstance(sessions, dict)
-        session = sessions.get(session_id)
-        if not isinstance(session, dict):
-            raise WorkerError(f"unknown session: {session_id}")
+        session = _require_session(registry, session_id, wt_root, ledger)
         baseline = str(session.get("baseline_handoff_id", "none"))
         entry = _ensure_worktree(registry, wt_id, wt_root)
         latest = entry["latest"]
         assert isinstance(latest, dict)
-        prior = latest.get("completed")
+        completed_by_ledger = entry["completed_by_ledger"]
+        assert isinstance(completed_by_ledger, dict)
+        prior = completed_by_ledger.get(ledger)
         prior_id = str(prior.get("handoff_id", "none")) if isinstance(
             prior, dict) else "none"
         supersedes = handoff_fields.get("supersedes")
@@ -1056,6 +1081,7 @@ def worker_complete(state_root: Path, cwd: str, *,
                         handoff_id=current_id)
         record["evidence"] = "completed"
         latest["completed"] = record
+        completed_by_ledger[ledger] = record
         per = entry["per_harness"]
         assert isinstance(per, dict)
         buckets = per.get(record["harness"])

@@ -51,8 +51,9 @@ import os
 import re
 import subprocess
 import sys
+from typing import NamedTuple
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 
 # --------------------------------------------------------------------------
 # policy
@@ -99,6 +100,42 @@ _INTEGER_KEYS = {
     "max_lines", "hard_max_lines", "soft_max_lines", "stale_after_days",
 }
 
+# Unicode 16.0 Nd blocks, shared with the native floor across Python runtimes.
+_DECIMAL_STARTS = (
+    0x30, 0x660, 0x6F0, 0x7C0, 0x966, 0x9E6, 0xA66, 0xAE6, 0xB66, 0xBE6,
+    0xC66, 0xCE6, 0xD66, 0xDE6, 0xE50, 0xED0, 0xF20, 0x1040, 0x1090, 0x17E0,
+    0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50,
+    0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+    0x104A0, 0x10D30, 0x10D40, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0,
+    0x11450, 0x114D0, 0x11650, 0x116C0, 0x116D0, 0x116DA, 0x11730, 0x118E0,
+    0x11950, 0x11BF0, 0x11C50, 0x11D50, 0x11DA0, 0x11F50, 0x16130, 0x16A60,
+    0x16AC0, 0x16B50, 0x16D70, 0x1CCF0, 0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC,
+    0x1D7F6, 0x1E140, 0x1E2F0, 0x1E4F0, 0x1E5F1, 0x1E950, 0x1FBF0,
+)
+_DECIMAL_DIGITS = "".join(f"{chr(start)}-{chr(start + 9)}" for start in _DECIMAL_STARTS)
+_DECIMAL_TRANSLATION = {start + digit: ord("0") + digit
+                        for start in _DECIMAL_STARTS for digit in range(10)}
+_INTEGER_RE = re.compile(rf"[+-]?[{_DECIMAL_DIGITS}]+")
+
+
+def _decimal_integer(value: str) -> int:
+    value = value.translate(_DECIMAL_TRANSLATION)
+    negative = value.startswith("-")
+    digits = value.lstrip("+-")
+    number = 0
+    for start in range(0, len(digits), 512):
+        chunk = digits[start:start + 512]
+        number = number * 10 ** len(chunk) + int(chunk)
+    return -number if negative else number
+
+
+def _decimal_text(value: int) -> str:
+    parts = []
+    while value:
+        value, part = divmod(value, 10 ** 512)
+        parts.append(str(part).zfill(512))
+    return "".join(reversed(parts)).lstrip("0") or "0"
+
 
 def _strip_yaml_comment(line: str) -> str:
     quote: str | None = None
@@ -133,6 +170,8 @@ def _yaml_scalar(token: str, source: str, lineno: int):
                 f"{source}:{lineno}: invalid double-quoted scalar") from exc
         if not isinstance(value, str):
             raise _PolicyFailure(f"{source}:{lineno}: scalar must be a string")
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise _PolicyFailure(f"{source}:{lineno}: scalar must be valid Unicode text")
         return value
     if token.startswith("'"):
         if len(token) < 2 or not token.endswith("'"):
@@ -143,8 +182,8 @@ def _yaml_scalar(token: str, source: str, lineno: int):
         return lowered == "true"
     if token == "[]":
         return []
-    if re.fullmatch(r"[+-]?\d+", token):
-        return int(token)
+    if _INTEGER_RE.fullmatch(token):
+        return _decimal_integer(token)
     if token[0] in "[{&*!|>@`" or token in ("null", "Null", "NULL", "~"):
         raise _PolicyFailure(f"{source}:{lineno}: unsupported YAML scalar {token!r}")
     return token
@@ -256,14 +295,16 @@ def parse_policy(blob: bytes | str, source: str = ".statutor.yaml") -> dict:
         where = f"{source}: governed rule {index}"
         if not isinstance(rule.get("pattern"), str) or not rule["pattern"]:
             raise _PolicyFailure(f"{where} needs a non-empty string pattern")
-        if rule.get("policy") not in _POLICY_KINDS:
+        if not isinstance(rule.get("policy"), str):
+            raise _PolicyFailure(f"{where} policy must be a string")
+        if rule["policy"] not in _POLICY_KINDS:
             raise _PolicyFailure(f"{where} has unsupported policy {rule.get('policy')!r}")
         for key in _INTEGER_KEYS:
             if key not in rule:
                 continue
             value = rule[key]
-            if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
-                value = int(value)
+            if isinstance(value, str) and _INTEGER_RE.fullmatch(value):
+                value = _decimal_integer(value)
                 rule[key] = value
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise _PolicyFailure(f"{where} {key} must be a non-negative integer")
@@ -424,7 +465,7 @@ def _physical_line_count(content: str | bytes) -> int:
     return content.count(newline) + (0 if content.endswith(newline) else 1)
 
 
-_TASK_LINE_RE = re.compile(r"^- \[([ xX])\] (T-(\d{4,}))\s+(.+)$")
+_TASK_LINE_RE = re.compile(rf"^- \[([ xX])\] (T-([{_DECIMAL_DIGITS}]{{4,}}))\s+(.+)$")
 
 
 def _state_tasks(content: str, path: str) -> tuple[dict[str, tuple[int, str, str]], str | None]:
@@ -440,7 +481,7 @@ def _state_tasks(content: str, path: str) -> tuple[dict[str, tuple[int, str, str
         checkbox, task_id, number, detail = match.groups()
         if task_id in tasks:
             return {}, f"{path}: duplicate state task ID {task_id}."
-        tasks[task_id] = (int(number), checkbox.lower(), detail)
+        tasks[task_id] = (_decimal_integer(number), checkbox.lower(), detail)
     return tasks, None
 
 
@@ -462,13 +503,66 @@ def _state_reason(path: str, candidate: str, baseline: str | None = None) -> str
         for task_id, (number, _, _) in candidate_tasks.items():
             if task_id not in baseline_tasks and number <= maximum:
                 return (f"{path}: new task ID {task_id} must be greater than existing "
-                        f"maximum T-{maximum:04d}.")
+                        f"maximum T-{_decimal_text(maximum).rjust(4, '0')}.")
     return None
 
 
 # --------------------------------------------------------------------------
 # core validation (pure): returns denial reason or None
 # --------------------------------------------------------------------------
+
+def _guard_batch_edit(payload: dict, cwd: str, policy: dict, root: str) -> str | None:
+    rel = _governed_rel(payload, cwd, policy, root)
+    if rel is None:
+        return None
+    path, _ = _resolve_tool_path(payload["file_path"], cwd, root)
+    rule = _match_rule(rel, policy)
+    if rule and rule.get("policy") == "frozen":
+        return f"{rel} is frozen (archived plan). Archived records are immutable."
+    unproved = (f"{rel} batch edit cannot be proved safe. Supply exact, disjoint "
+                "ReplacementChunks or use write with the complete file.")
+    chunks = payload.get("ReplacementChunks")
+    if not isinstance(chunks, list) or not chunks:
+        return unproved
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            existing = handle.read()
+    except (OSError, UnicodeError):
+        return unproved
+    offsets = [0, *(match.end() for match in re.finditer("\n", existing))]
+    if offsets[-1] == len(existing):
+        offsets.pop()
+    offsets.append(len(existing))
+    replacements: list[tuple[int, int, str]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            return unproved
+        old, new = chunk.get("TargetContent"), chunk.get("ReplacementContent")
+        start = chunk.get("StartLine", 1)
+        end = chunk.get("EndLine", len(offsets) - 1)
+        multiple = chunk.get("AllowMultiple", False)
+        if (not isinstance(old, str) or not old or not isinstance(new, str)
+                or type(start) is not int or type(end) is not int
+                or not 1 <= start <= end < len(offsets)
+                or type(multiple) is not bool):
+            return unproved
+        first, limit = offsets[start - 1], offsets[end]
+        matches: list[int] = []
+        position = existing.find(old, first, limit)
+        while position != -1:
+            matches.append(position)
+            position = existing.find(old, position + len(old), limit)
+        if not matches or (len(matches) != 1 and not multiple):
+            return unproved
+        replacements.extend((position, position + len(old), new) for position in matches)
+    replacements.sort()
+    if any(left[1] > right[0] for left, right in zip(replacements, replacements[1:])):
+        return unproved
+    candidate = existing
+    for start, end, replacement in reversed(replacements):
+        candidate = candidate[:start] + replacement + candidate[end:]
+    return validate("write", {"file_path": path, "content": candidate}, cwd, policy, root)
+
 
 def validate(
     tool: str, payload: dict, cwd: str, policy: dict | None = None,
@@ -477,6 +571,8 @@ def validate(
     root = os.path.abspath(policy_root or cwd)
     policy = policy or load_policy(root)
     tool, payload, original = _canonicalize(tool, payload)
+    if tool == "multi_replace_file_content":
+        return _guard_batch_edit(payload, cwd, policy, root)
     if original in _PROVED_EDIT_ALIASES and not payload.get("old_string"):
         rel = _governed_rel(payload, cwd, policy, root)
         if rel is not None:
@@ -513,7 +609,7 @@ def validate(
         if tool == "write":
             if payload.get("append"):
                 try:
-                    existing = open(absolute_path, encoding="utf-8").read()
+                    existing = open(absolute_path, encoding="utf-8", newline="").read()
                 except OSError:
                     existing = ""
                 candidate = existing + payload.get("content", "")
@@ -524,7 +620,7 @@ def validate(
             new = payload.get("new_string", "")
             if old:
                 try:
-                    existing = open(absolute_path, encoding="utf-8").read()
+                    existing = open(absolute_path, encoding="utf-8", newline="").read()
                 except OSError:
                     existing = None
                 if existing is not None and old in existing:
@@ -538,7 +634,7 @@ def validate(
     if kind == "state":
         candidate: str | None = None
         try:
-            existing = open(absolute_path, encoding="utf-8").read()
+            existing = open(absolute_path, encoding="utf-8", newline="").read()
         except FileNotFoundError:
             existing = ""
         except OSError:
@@ -569,7 +665,7 @@ def validate(
         elif tool == "write":
             if not payload.get("append"):
                 try:
-                    existing = open(absolute_path, encoding="utf-8").read()
+                    existing = open(absolute_path, encoding="utf-8", newline="").read()
                 except FileNotFoundError:
                     existing = ""
                 if existing.strip() and existing.strip() not in payload.get("content", ""):
@@ -835,7 +931,7 @@ def guard_apply_patch(
             cap = int(rule.get(cap_key, 200))
             try:
                 cur_n = _physical_line_count(
-                    open(absolute_path, encoding="utf-8").read())
+                    open(absolute_path, encoding="utf-8", newline="").read())
             except OSError:
                 cur_n = None  # unreadable/unmapped path: let the floor judge
             if cur_n is not None and cur_n + adds - dels > cap:
@@ -1123,6 +1219,12 @@ class _GitFailure(RuntimeError):
     """A floor-mode Git operation failed; never silently reinterpret it."""
 
 
+class _GitEntry(NamedTuple):
+    oid: str
+    blob: bytes
+    mode: str
+
+
 def _git_bytes(cwd: str, *args: str) -> bytes:
     """Run one floor-mode Git query and return exact stdout bytes.
 
@@ -1147,6 +1249,15 @@ def _git_bytes(cwd: str, *args: str) -> bytes:
 
 def _git(cwd: str, *args: str) -> str:
     return _git_bytes(cwd, *args).decode("utf-8", "replace")
+
+
+def _git_worktree_root(cwd: str) -> str:
+    worktree = _git_bytes(cwd, "rev-parse", "--is-inside-work-tree").strip()
+    if worktree != b"true":
+        raise _GitFailure(
+            "git rev-parse --is-inside-work-tree reported no worktree; staged "
+            "validation requires a non-bare Git worktree with a readable index.")
+    return os.fsdecode(_git_bytes(cwd, "rev-parse", "--show-toplevel").removesuffix(b"\n"))
 
 
 def _staged_changes(cwd: str) -> list[tuple[str, str | None, str | None]]:
@@ -1244,7 +1355,7 @@ def _head_oid(cwd: str) -> str | None:
     raise _GitFailure("git rev-parse --verify HEAD failed; trust state is unknown.")
 
 
-def _head_entry(cwd: str, path: str) -> tuple[str, bytes] | None:
+def _head_entry(cwd: str, path: str) -> _GitEntry | None:
     if _head_oid(cwd) is None:
         return None
     listing = _git_bytes(cwd, "ls-tree", "-z", "HEAD", "--", path)
@@ -1257,10 +1368,11 @@ def _head_entry(cwd: str, path: str) -> tuple[str, bytes] | None:
     fields = metadata.split()
     if len(fields) != 3 or listed_path.decode("utf-8", "replace") != path:
         raise _GitFailure(f"git ls-tree returned malformed entry for {path}.")
-    return fields[2].decode("ascii"), _git_bytes(cwd, "show", f"HEAD:{path}")
+    return _GitEntry(fields[2].decode("ascii"),
+                     _git_bytes(cwd, "show", f"HEAD:{path}"), fields[0].decode("ascii"))
 
 
-def _index_entry(cwd: str, path: str) -> tuple[str, bytes] | None:
+def _index_entry(cwd: str, path: str) -> _GitEntry | None:
     listing = _git_bytes(cwd, "ls-files", "--stage", "-z", "--", path)
     if not listing:
         return None
@@ -1272,7 +1384,8 @@ def _index_entry(cwd: str, path: str) -> tuple[str, bytes] | None:
     if (len(fields) != 3 or fields[2] != b"0" or
             listed_path.decode("utf-8", "replace") != path):
         raise _GitFailure(f"index has malformed or unmerged entry for {path}.")
-    return fields[1].decode("ascii"), _git_bytes(cwd, "show", f":{path}")
+    return _GitEntry(fields[1].decode("ascii"),
+                     _git_bytes(cwd, "show", f":{path}"), fields[0].decode("ascii"))
 
 
 def _policy_snapshots(cwd: str) -> tuple[dict, dict, dict]:
@@ -1280,19 +1393,21 @@ def _policy_snapshots(cwd: str) -> tuple[dict, dict, dict]:
     candidate_entry = _index_entry(cwd, ".statutor.yaml")
     try:
         baseline = (DEFAULT_POLICY if baseline_entry is None else
-                    parse_policy(baseline_entry[1], "HEAD:.statutor.yaml"))
+                    parse_policy(baseline_entry.blob, "HEAD:.statutor.yaml"))
     except _PolicyFailure as exc:
         raise _PolicyFailure(
             "HEAD:.statutor.yaml: invalid or unsupported Statutor policy") from exc
     try:
         candidate = (DEFAULT_POLICY if candidate_entry is None else
-                     parse_policy(candidate_entry[1], ":.statutor.yaml"))
+                     parse_policy(candidate_entry.blob, ":.statutor.yaml"))
     except _PolicyFailure as exc:
         raise _PolicyFailure(
             ":.statutor.yaml: invalid or unsupported Statutor policy") from exc
     details = {
-        "baseline_policy_oid": baseline_entry[0] if baseline_entry else None,
-        "candidate_policy_oid": candidate_entry[0] if candidate_entry else None,
+        "baseline_policy_oid": baseline_entry.oid if baseline_entry else None,
+        "candidate_policy_oid": candidate_entry.oid if candidate_entry else None,
+        "baseline_policy_mode": baseline_entry.mode if baseline_entry else None,
+        "candidate_policy_mode": candidate_entry.mode if candidate_entry else None,
     }
     return baseline, candidate, details
 
@@ -1302,16 +1417,17 @@ def _reserved_changes(cwd: str, snapshots: dict) -> list[str]:
     if snapshots["baseline_policy_oid"] is None:
         return []  # first tracked policy is bootstrap; C still judges it
     reserved: list[str] = []
-    if snapshots["baseline_policy_oid"] != snapshots["candidate_policy_oid"]:
+    if (snapshots["baseline_policy_oid"] != snapshots["candidate_policy_oid"] or
+            snapshots["baseline_policy_mode"] != snapshots["candidate_policy_mode"]):
         reserved.append(".statutor.yaml")
 
     baseline_bridge = _head_entry(cwd, "CLAUDE.md")
     candidate_bridge = _index_entry(cwd, "CLAUDE.md")
-    baseline_blob = baseline_bridge[1] if baseline_bridge else None
-    candidate_blob = candidate_bridge[1] if candidate_bridge else None
+    baseline_blob = baseline_bridge.blob if baseline_bridge else None
+    candidate_blob = candidate_bridge.blob if candidate_bridge else None
     baseline_exact = baseline_blob in _EXACT_CLAUDE_BRIDGES
     candidate_exact = candidate_blob in _EXACT_CLAUDE_BRIDGES
-    if ((baseline_exact and candidate_blob != baseline_blob) or
+    if ((baseline_exact and candidate_bridge != baseline_bridge) or
             (not baseline_exact and candidate_exact)):
         reserved.append("CLAUDE.md")
     return sorted(reserved)
@@ -1459,6 +1575,7 @@ def _policy_violations(cwd: str,
 def run_staged(cwd: str) -> int:
     violations: list[str] = []
     try:
+        cwd = _git_worktree_root(cwd)
         changes = _staged_changes(cwd)
         baseline, candidate, snapshots = _policy_snapshots(cwd)
         reserved = _reserved_changes(cwd, snapshots)
@@ -1515,6 +1632,7 @@ def run_trust_approve(argv: list[str]) -> int:
         print("--reason TEXT is required", file=sys.stderr)
         return 64
     try:
+        cwd = _git_worktree_root(cwd)
         changes = _staged_changes(cwd)
         baseline, candidate, snapshots = _policy_snapshots(cwd)
         reserved = _reserved_changes(cwd, snapshots)

@@ -51,6 +51,10 @@ def versions(root: Path = ROOT) -> dict[str, str]:
     plugin = json.loads(
         (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )["version"]
+    antigravity = json.loads(
+        (root / "adapters" / "antigravity" / "plugin.json").read_text(
+            encoding="utf-8")
+    )["version"]
     npm = json.loads(
         (root / "adapters" / "opencode" / "package.json").read_text(
             encoding="utf-8")
@@ -66,11 +70,17 @@ def versions(root: Path = ROOT) -> dict[str, str]:
     if python != plugin:
         raise RuntimeError(
             f"Python {python} != Claude plugin {plugin}")
+    if python != antigravity:
+        raise RuntimeError(
+            f"Python {python} != Antigravity plugin {antigravity}")
     if locked is None or locked.group(1) != cargo:
         raise RuntimeError(
             f"Cargo manifest {cargo} != lockfile "
             f"{locked.group(1) if locked else '<missing>'}")
-    return {"python": python, "plugin": plugin, "npm": npm, "cargo": cargo}
+    return {
+        "python": python, "plugin": plugin, "antigravity": antigravity,
+        "npm": npm, "cargo": cargo,
+    }
 
 
 def _check_tag(tag: str | None, python_version: str) -> None:
@@ -87,13 +97,11 @@ def _candidate_tree(destination: Path) -> None:
         raise RuntimeError("tracked worktree changes are not staged")
     if unstaged.returncode != 0:
         raise RuntimeError("git diff could not inspect the worktree")
-    _run(["git", "diff", "--cached", "--check"])
-    _run([
-        "git",
-        "checkout-index",
-        "--all",
-        f"--prefix={destination}{os.sep}",
-    ])
+    _run(["git", "diff", "--cached", "--check"], cwd=ROOT)
+    tree = subprocess.check_output(["git", "write-tree"], cwd=ROOT, text=True).strip()
+    _run(["git", "clone", "--shared", "--no-checkout", "--quiet", str(ROOT), str(destination)], cwd=ROOT)
+    _run(["git", "read-tree", tree], cwd=destination)
+    _run(["git", "checkout-index", "--all"], cwd=destination)
 
 
 def _safe_parts(name: str, expected_root: str) -> tuple[str, ...]:
@@ -103,6 +111,17 @@ def _safe_parts(name: str, expected_root: str) -> tuple[str, ...]:
     if path.parts[0] != expected_root:
         raise RuntimeError(f"unexpected archive root: {name}")
     return path.parts
+
+
+def _check_candidate_identity(source: Path) -> None:
+    def identity(path: Path) -> tuple[str, str]:
+        return (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip(),
+            subprocess.check_output(["git", "write-tree"], cwd=path, text=True).strip(),
+        )
+
+    if identity(source) != identity(ROOT):
+        raise RuntimeError("repository HEAD or index changed after candidate snapshot; rerun the gate")
 
 
 def _audit_sdist(path: Path, version: str) -> None:
@@ -331,11 +350,12 @@ def _build_and_smoke(source: Path, workspace: Path, version: str) -> list[Path]:
     return [sdist, wheel]
 
 
-def _verify_source(workspace: Path) -> None:
+def _verify_source(source: Path, workspace: Path) -> None:
+    _check_candidate_identity(source)
     env = {**os.environ, "STATUTOR_PACKAGE_AUDIT": "1"}
-    _run([sys.executable, "core/statutor_doctor.py", "."])
-    _run([sys.executable, "core/statutor_core.py", "staged", "."])
-    _run([sys.executable, "-m", "pytest", "-q"], env=env)
+    _run([sys.executable, "core/statutor_doctor.py", "."], cwd=source)
+    _run([sys.executable, str(source / "core/statutor_core.py"), "staged", str(ROOT)], cwd=source)
+    _run([sys.executable, "-m", "pytest", "-q"], env=env, cwd=source)
     cargo_env = {
         **os.environ,
         "CARGO_TARGET_DIR": str(workspace / "cargo-target"),
@@ -347,10 +367,10 @@ def _verify_source(workspace: Path) -> None:
         "--release",
         "--manifest-path",
         "crates/statutor/Cargo.toml",
-    ], env=cargo_env)
+    ], env=cargo_env, cwd=source)
     tracked_target = subprocess.run(
         ["git", "ls-files", "--", "crates/statutor/target"],
-        cwd=ROOT,
+        cwd=source,
         capture_output=True,
         text=True,
         check=True,
@@ -398,9 +418,10 @@ def main(argv: list[str] | None = None) -> int:
         source = workspace / "source"
         source.mkdir()
         _candidate_tree(source)
-        _verify_source(workspace)
+        _verify_source(source, workspace)
         artifacts = _build_and_smoke(
             source, workspace, found["python"])
+        _check_candidate_identity(source)
         if output is not None:
             output.mkdir(parents=True, exist_ok=True)
             for artifact in artifacts:

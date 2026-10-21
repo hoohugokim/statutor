@@ -6,7 +6,7 @@
 the first release with object entrypoints). Both register the same guard on
 tool execution and shell out to the Python kernel CLI.
 
-1. `pipx install statutor` — the adapter shells out to the kernel; without the
+1. `pipx install 'statutor>=0.7.4'` — the adapter shells out to the kernel; without the
    CLI on `PATH` the plugin is a no-op. From a source checkout, the developer
    equivalent is `python -m pip install -e .` at the repository root.
    The adapter calls `statutor check --if-ledger`: it stays silent unless the
@@ -117,10 +117,11 @@ fallback and classify duplicate skill trees as identical or divergent.
 Use `statutor global init`, review `statutor global plan --json`, then opt in
 with `statutor global apply --host opencode` and `statutor global skill apply`.
 The separate `python scripts/global_e2e.py --host opencode --json` probe was
-verified against local OpenCode 1.18.20. Under a temporary profile,
-`opencode debug skill --pure` resolved the deliberately duplicated fixture to
-one entry. The probe performs no model or network request and never points
-OpenCode at the caller's real home.
+verified against local OpenCode 2.1.1. Under a temporary profile, its private
+loopback API resolved the deliberately duplicated fixture to one skill entry
+and preserved its body. The probe performs no model or external network
+request and never points OpenCode at the caller's real home. Instruction
+projections are verified on disk; model-context loading is not exercised.
 
 ## Worker provenance (v0.5)
 

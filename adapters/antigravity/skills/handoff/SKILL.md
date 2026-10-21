@@ -20,7 +20,7 @@ Rewrite `HANDOFF.md` now, following the policy exactly:
 - "Next action" must be specific enough for a cold-started session: file paths, commands, expected outcome.
 - If anything settled this session belongs in `DECISIONS.md`, append the D-record first, then reference its id here.
 - If worker tracking is active:
-  - Set `last_worker: antigravity`
+  - Set `last_worker` and `last_machine` to the values returned by `statutor worker begin`
   - Mint fresh `handoff_id` via `statutor worker new-id`
   - Set `supersedes` to the prior `handoff_id`
   - Record completion via `statutor worker complete --session <id>`

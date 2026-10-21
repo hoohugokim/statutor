@@ -85,6 +85,57 @@ class Fingerprint:
         return {"kind": self.kind, "digest": self.digest, "mode": self.mode}
 
 
+@dataclass(frozen=True)
+class TargetIdentity:
+    logical_target: Path
+    real_parent: Path
+
+    @property
+    def physical_target(self) -> Path:
+        return self.real_parent / self.logical_target.name
+
+    def require(self) -> None:
+        try:
+            parent = self.logical_target.parent.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ConcurrentChange(
+                f"cannot resolve target parent: {self.logical_target}") from exc
+        if parent != self.real_parent:
+            raise ConcurrentChange(
+                f"target parent identity changed: {self.logical_target}")
+
+
+def target_identity(
+    target: Path, *, expected_parent: str | Path | None = None,
+) -> TargetIdentity:
+    logical = _absolute(target)
+    try:
+        real_parent = logical.parent.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ConcurrentChange(f"cannot resolve target parent: {logical}") from exc
+    identity = TargetIdentity(
+        logical, Path(expected_parent) if expected_parent is not None else real_parent)
+    identity.require()
+    return identity
+
+
+def managed_target_reason(
+    target: Path, receipt: dict[str, object], current: Fingerprint | None = None,
+) -> str | None:
+    validate_artifact_receipt(receipt)
+    logical = _absolute(target)
+    try:
+        real = logical.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return "managed target identity cannot be resolved"
+    if (str(logical) != receipt["target_logical"]
+            or str(real) != receipt["target_real"]):
+        return "managed target identity changed"
+    if (current or fingerprint(logical)).token != receipt["installed_token"]:
+        return "managed target is missing or modified"
+    return None
+
+
 def _absolute(path: str | os.PathLike[str]) -> Path:
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
@@ -445,34 +496,96 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
+def _rollback_replacement(
+    target: Path, installed_token: str,
+    previous: Path | None, previous_token: str,
+) -> None:
+    try:
+        installed = _require_expected(target, installed_token)
+        if previous is None:
+            _remove_artifact(target)
+        else:
+            _require_expected(previous, previous_token)
+            if installed.kind == "tree":
+                displaced = target.parent / (
+                    f".{target.name}.statutor-failed-{secrets.token_hex(8)}")
+                os.replace(target, displaced)
+                try:
+                    os.replace(previous, target)
+                except BaseException:
+                    if fingerprint(target).kind == ABSENT:
+                        _require_expected(displaced, installed_token)
+                        os.replace(displaced, target)
+                    raise
+                _remove_artifact(displaced)
+            else:
+                os.replace(previous, target)
+        _fsync_directory(target.parent)
+    except BaseException as error:
+        recovery = (f"; prior artifact retained at {previous}"
+                    if previous is not None and previous.exists() else "")
+        raise ConcurrentChange(
+            f"cannot safely roll back replacement of {target}{recovery}") from error
+
+
 def atomic_write_bytes(
     target: Path,
     content: bytes,
     *,
     expected: str,
     mode: int = 0o600,
+    expected_parent: str | Path | None = None,
 ) -> Fingerprint:
     """Atomically replace a regular file if its fingerprint still matches."""
-    target = _absolute(target)
+    identity = target_identity(target, expected_parent=expected_parent)
+    target = identity.physical_target
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    identity.require()
     current = _require_expected(target, expected)
     if current.kind not in (ABSENT, "file"):
         raise GlobalError(f"refusing to replace non-file target: {target}")
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.statutor-", dir=target.parent)
     temporary = Path(temporary_name)
+    previous: Path | None = None
+    installed_token: str | None = None
+    keep_previous = False
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temporary, mode)
+        if current.kind == "file":
+            prior_descriptor, prior_name = tempfile.mkstemp(
+                prefix=f".{target.name}.statutor-old-", dir=target.parent)
+            previous = Path(prior_name)
+            with os.fdopen(prior_descriptor, "wb") as handle:
+                handle.write(target.read_bytes())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(previous, current.mode or 0o600)
+            _require_expected(previous, expected)
         _require_expected(target, expected)
+        identity.require()
+        replacement_token = fingerprint(temporary).token
         os.replace(temporary, target)
+        installed_token = replacement_token
         _fsync_directory(target.parent)
+        identity.require()
+    except BaseException:
+        if installed_token is not None:
+            try:
+                _rollback_replacement(target, installed_token, previous, expected)
+            except BaseException:
+                keep_previous = True
+                raise
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()
+        if previous is not None and not keep_previous:
+            _remove_artifact(previous)
     return fingerprint(target)
 
 
@@ -482,9 +595,11 @@ def atomic_write_json(
     *,
     expected: str,
     mode: int = 0o600,
+    expected_parent: str | Path | None = None,
 ) -> Fingerprint:
     return atomic_write_bytes(
-        target, canonical_json(data), expected=expected, mode=mode)
+        target, canonical_json(data), expected=expected, mode=mode,
+        expected_parent=expected_parent)
 
 
 def _copy_safe_tree(source: Path, destination: Path) -> None:
@@ -529,11 +644,14 @@ def atomic_replace_tree(
     source: Path,
     *,
     expected: str,
+    expected_parent: str | Path | None = None,
 ) -> Fingerprint:
     """Install a validated tree with CAS and a same-parent rollback rename."""
-    target = _absolute(target)
+    identity = target_identity(target, expected_parent=expected_parent)
+    target = identity.physical_target
     source = _absolute(source)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    identity.require()
     current = _require_expected(target, expected)
     if current.kind not in (ABSENT, "tree"):
         raise GlobalError(f"refusing to replace non-directory target: {target}")
@@ -543,27 +661,32 @@ def atomic_replace_tree(
     temporary.rmdir()
     old = target.parent / f".{target.name}.statutor-old-{secrets.token_hex(8)}"
     moved_old = False
+    installed_token: str | None = None
     try:
         _copy_safe_tree(source, temporary)
         _require_expected(target, expected)
+        identity.require()
+        replacement_token = fingerprint(temporary).token
         if current.kind == "tree":
             os.replace(target, old)
             moved_old = True
-        try:
-            os.replace(temporary, target)
-        except BaseException:
-            if moved_old and not target.exists() and old.exists():
-                os.replace(old, target)
-                moved_old = False
-            raise
+        os.replace(temporary, target)
+        installed_token = replacement_token
         _fsync_directory(target.parent)
+        identity.require()
+    except BaseException:
+        if installed_token is not None or moved_old:
+            _rollback_replacement(
+                target, installed_token or ABSENT,
+                old if moved_old else None, expected)
+            moved_old = False
+        raise
+    else:
         if moved_old:
-            shutil.rmtree(old)
+            _remove_artifact(old)
             moved_old = False
     finally:
         _remove_artifact(temporary)
-        if moved_old:
-            _remove_artifact(old)
     return fingerprint(target)
 
 
@@ -656,10 +779,12 @@ def create_backup(
     *,
     operation_id: str,
     artifact_id: str,
+    expected_parent: str | Path | None = None,
 ) -> tuple[Path, dict[str, object]]:
     if not re.fullmatch(r"[a-zA-Z0-9._-]{1,128}", artifact_id):
         raise SchemaError("invalid backup artifact id")
-    target = _absolute(target)
+    identity = target_identity(target, expected_parent=expected_parent)
+    target = identity.physical_target
     backup_dir = _absolute(state_root) / "backups" / operation_id / artifact_id
     if backup_dir.exists():
         raise GlobalError(f"backup already exists: {backup_dir}")
@@ -676,12 +801,14 @@ def create_backup(
         _copy_safe_tree(target, payload)
     elif original.kind == "symlink":
         os.symlink(os.readlink(target), payload)
+    _require_expected(target, original.token)
+    identity.require()
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "operation_id": operation_id,
         "artifact_id": artifact_id,
-        "logical_target": str(target),
-        "real_parent": str(target.parent.resolve(strict=False)),
+        "logical_target": str(identity.logical_target),
+        "real_parent": str(identity.real_parent),
         "original": original.to_json(),
         "original_token": original.token,
         "payload": None if original.kind == ABSENT else "payload",
@@ -700,9 +827,14 @@ def restore_backup(
     manifest = load_json(manifest_path)
     if not isinstance(manifest, dict) or manifest.get("schema_version") != SCHEMA_VERSION:
         raise SchemaError("invalid backup manifest")
-    target = _absolute(target)
-    if manifest.get("logical_target") != str(target):
+    logical = _absolute(target)
+    if manifest.get("logical_target") != str(logical):
         raise SchemaError("backup target does not match the requested target")
+    real_parent = manifest.get("real_parent")
+    if not isinstance(real_parent, str) or not Path(real_parent).is_absolute():
+        raise SchemaError("backup target parent must be absolute")
+    identity = target_identity(logical, expected_parent=real_parent)
+    target = identity.physical_target
     _require_expected(target, expected_current)
     original = manifest.get("original")
     if not isinstance(original, dict) or original.get("kind") not in {
@@ -712,18 +844,22 @@ def restore_backup(
     kind = original["kind"]
     payload = manifest_path.parent / "payload"
     if kind == ABSENT:
+        identity.require()
         _remove_artifact(target)
         _fsync_directory(target.parent)
         return fingerprint(target)
     if kind == "file":
         return atomic_write_bytes(
-            target,
+            logical,
             payload.read_bytes(),
             expected=expected_current,
             mode=int(original.get("mode") or 0o600),
+            expected_parent=real_parent,
         )
     if kind == "tree":
-        return atomic_replace_tree(target, payload, expected=expected_current)
+        return atomic_replace_tree(
+            logical, payload, expected=expected_current, expected_parent=real_parent)
+    identity.require()
     _remove_artifact(target)
     os.symlink(os.readlink(payload), target)
     _fsync_directory(target.parent)

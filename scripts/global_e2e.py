@@ -2,7 +2,8 @@
 """Opt-in current-release E2E for the v0.4 global layer under fake homes.
 
 This script never points a host at the caller's real home and never performs a
-model or network request. It exercises native read-only diagnostics where a
+model or external network request. OpenCode uses a private loopback server.
+It exercises native read-only diagnostics where a
 host exposes them, then proves Statutor's modified-target refusal and exact
 uninstall recovery. It is intentionally separate from the hermetic release
 gate because it requires locally installed host binaries.
@@ -13,12 +14,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +36,9 @@ import statutor_skills as skills  # noqa: E402
 
 
 EXPECTED_VERSIONS = {
-    "claude": "2.1.258",
-    "codex": "0.152.1",
-    "opencode": "1.18.20",
+    "claude": "2.1.296",
+    "codex": "0.162.1",
+    "opencode": "2.1.1",
 }
 GLOBAL_MARKER = "STATUTOR_E2E_GLOBAL_INSTRUCTION_7F6A1D"
 SKILL_NAME = "statutor-e2e-skill"
@@ -71,12 +76,12 @@ def _version(host: str, binary: str, env: dict[str, str], cwd: Path) -> str:
 
 
 def _fake_env(profile: Path, roots: substrate.ResolvedRoots) -> dict[str, str]:
-    env = dict(os.environ)
-    for name in (
-        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
-        "OPENCODE_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY",
-    ):
-        env.pop(name, None)
+    env = {
+        name: os.environ[name] for name in (
+            "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+            "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+        ) if name in os.environ
+    }
     replacements = {
         "HOME": roots.home,
         "CLAUDE_CONFIG_DIR": roots.claude_home,
@@ -85,13 +90,21 @@ def _fake_env(profile: Path, roots: substrate.ResolvedRoots) -> dict[str, str]:
         "XDG_DATA_HOME": str(profile / "xdg-data"),
         "XDG_STATE_HOME": str(profile / "xdg-state"),
         "XDG_CACHE_HOME": str(profile / "xdg-cache"),
+        "XDG_RUNTIME_DIR": str(profile / "xdg-runtime"),
+        "TMPDIR": str(profile / "tmp"),
+        "TMP": str(profile / "tmp"),
+        "TEMP": str(profile / "tmp"),
         "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+        "OPENCODE_DISABLE_MODELS_FETCH": "1",
+        "OTEL_SDK_DISABLED": "true",
         "NO_COLOR": "1",
         "TERM": "dumb",
         "CI": "1",
     }
     env.update(replacements)
-    for name in ("xdg-config", "xdg-data", "xdg-state", "xdg-cache"):
+    for name in (
+        "xdg-config", "xdg-data", "xdg-state", "xdg-cache", "xdg-runtime", "tmp",
+    ):
         (profile / name).mkdir(parents=True, exist_ok=True)
     return env
 
@@ -186,22 +199,74 @@ def _codex_probe(binary: str, project: Path, env: dict[str, str]) -> dict[str, o
 def _opencode_probe(
     binary: str, project: Path, env: dict[str, str],
 ) -> dict[str, object]:
-    result = _run(
-        [binary, "debug", "skill", "--pure"], cwd=project, env=env)
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise E2EError("OpenCode debug skill did not emit JSON") from error
-    matches = [item for item in payload if item.get("name") == SKILL_NAME]
-    if len(matches) != 1:
-        raise E2EError(
-            f"OpenCode reported {len(matches)} entries for the duplicated fixture")
-    return {
-        "surface": "debug skill --pure",
-        "skill_entries": len(matches),
-        "location": matches[0].get("location"),
-        "instruction_contract": "native AGENTS projection verified on disk",
+    native_env = {
+        **env, "OPENCODE_PASSWORD": secrets.token_urlsafe(32),
+        "OPENCODE_DISABLE_MODELS_FETCH": "1", "OTEL_SDK_DISABLED": "true",
     }
+    process = subprocess.Popen(
+        [binary, "serve", "--stdio", "--port", "0"],
+        cwd=project, env=native_env, text=True,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        ready: queue.Queue[str] = queue.Queue()
+        assert process.stdout is not None
+        threading.Thread(
+            target=lambda: ready.put(process.stdout.readline()), daemon=True).start()
+        try:
+            url = json.loads(ready.get(timeout=10))["url"]
+            if not isinstance(url, str):
+                raise ValueError("expected a URL string")
+            parsed = urlparse(url)
+        except (queue.Empty, ValueError, KeyError, TypeError) as error:
+            raise E2EError("OpenCode private server did not report readiness") from error
+        if parsed.scheme != "http" or parsed.hostname not in (
+            "127.0.0.1", "::1", "localhost",
+        ):
+            raise E2EError("OpenCode private server URL was not loopback HTTP")
+        command = [binary, "api", "--server", url]
+        location = ["--param", f"location[directory]={project}"]
+        _run(command + ["model.list"] + location, cwd=project, env=native_env)
+        result = _run(
+            command + ["skill.list"] + location, cwd=project, env=native_env)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise E2EError("OpenCode skill.list did not emit JSON") from error
+        catalog = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(catalog, list) or any(
+            not isinstance(item, dict) for item in catalog
+        ):
+            raise E2EError("OpenCode skill.list did not emit a skill catalog")
+        matches = [item for item in catalog if item.get("name") == SKILL_NAME]
+        if len(matches) != 1:
+            raise E2EError(
+                f"OpenCode reported {len(matches)} entries for the duplicated fixture")
+        skill = matches[0]
+        path = skill.get("path")
+        expected = Path(env["HOME"]) / ".agents/skills" / SKILL_NAME / "SKILL.md"
+        if not isinstance(path, str) or Path(path).resolve() != expected.resolve():
+            raise E2EError("OpenCode fixture skill came from an unexpected path")
+        content = skill.get("content")
+        if not isinstance(content, str) or content.strip() != "# E2E fixture":
+            raise E2EError("OpenCode fixture skill body was not preserved")
+        return {
+            "surface": "private server + api model.list then skill.list",
+            "skill_entries": len(matches),
+            "location": path,
+            "skill_content_verified": True,
+            "instruction_contract": "native AGENTS projection verified on disk",
+        }
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 def _claude_probe(

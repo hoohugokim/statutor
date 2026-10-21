@@ -120,7 +120,7 @@ HANDOFF lineage in Git history, which lives as long as the repository does.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.7.3
+        rev: v0.7.4
         hooks: [{id: statutor}]
 
 `init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,
@@ -162,7 +162,7 @@ change and is never committed.
 
 ## Release gate
 
-With Python `build`/`pytest`, Cargo, and npm available, stage the candidate and
+With Python `build`/`pytest`/`PyYAML`, Cargo, and Node 24/npm available, stage the candidate and
 run `python scripts/release_gate.py`. The gate tests the exact Git index, audits
 all package payloads, builds the Python sdist and wheel in scratch space,
 installs the wheel into an isolated target, and smoke-tests both console
@@ -172,9 +172,14 @@ verified artifacts are copied only after every check succeeds.
 The v0.4 global layer also has a separate, opt-in current-host probe:
 `python scripts/global_e2e.py --json`. It pins the tested Claude, Codex, and
 OpenCode versions, rehomes every host under a temporary profile, performs no
-model or network request, and proves native discovery where an offline surface
+model or external network request, and proves native discovery where an offline surface
 exists, modified-target refusal, and exact uninstall recovery. It is not part
 of the hermetic release gate and never mutates the caller's real home.
+
+The current global-layer baselines are Claude Code 2.1.296, Codex CLI 0.162.1,
+and OpenCode 2.1.1. Codex exposes the prompt catalog; OpenCode exposes its
+skill catalog through a private loopback API. Claude has no offline personal
+skill catalog probe. These checks do not extend the worker capability claims.
 
 ## Portable user layer (v0.4)
 

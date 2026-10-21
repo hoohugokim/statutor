@@ -20,6 +20,110 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_ROOT = REPO_ROOT / "adapters" / "antigravity"
 
 
+def _batch_chunk(old: str, new: str, start: int = 1, end: int = 1) -> dict:
+    return {
+        "StartLine": start, "EndLine": end,
+        "TargetContent": old, "ReplacementContent": new,
+    }
+
+
+@pytest.mark.parametrize(
+    "filename,body,chunks,denied",
+    [
+        ("plans/archive/probe.md", "old\n", [_batch_chunk("old", "new")], True),
+        ("DECISIONS.md", "settled\n", [_batch_chunk("settled", "changed")], True),
+        ("DECISIONS.md", "settled\n", [_batch_chunk("settled", "settled\nnew")], False),
+        ("TASKS.md", "- [ ] T-0001 keep\n", [_batch_chunk("T-0001", "T-0002")], True),
+        ("TASKS.md", "- [ ] T-0001 keep\n", [_batch_chunk("[ ]", "[x]")], False),
+        ("AGENTS.md", "old\n", [_batch_chunk("old", "new\n" * 201)], True),
+        ("HANDOFF.md", "## Goal\nold\n", [_batch_chunk("## Goal", "removed")], True),
+        ("notes/plain.md", "old\n", [_batch_chunk("old", "new")], False),
+    ],
+)
+def test_batch_edits_obey_complete_candidate_policy(
+    tmp_path: Path, filename: str, body: str, chunks: list[dict], denied: bool,
+) -> None:
+    path = tmp_path / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    reason = kernel.validate(
+        "multi_replace_file_content",
+        {"TargetFile": str(path), "ReplacementChunks": chunks},
+        str(tmp_path),
+    )
+    assert (reason is not None) is denied
+
+
+@pytest.mark.parametrize("chunks", [
+    [], None, "invalid", [{}],
+    [_batch_chunk("missing", "new")],
+    [_batch_chunk("old", "new", 2, 1)],
+    [_batch_chunk("old", "new", True, 1)],
+    [_batch_chunk("old", "new"), _batch_chunk("old", "other")],
+])
+def test_batch_edit_refuses_unproved_governed_candidate(tmp_path: Path, chunks) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("old\n", encoding="utf-8")
+    assert kernel.validate(
+        "multi_replace_file_content",
+        {"TargetFile": str(path), "ReplacementChunks": chunks},
+        str(tmp_path),
+    ) is not None
+
+
+def test_batch_edits_reconstruct_original_disjoint_line_ranges(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("same\nkeep\nsame\n", encoding="utf-8")
+    payload = {
+        "TargetFile": str(path),
+        "ReplacementChunks": [
+            _batch_chunk("same", "first", 1, 1),
+            _batch_chunk("same", "last", 3, 3),
+        ],
+    }
+    assert kernel.validate("multi_replace_file_content", payload, str(tmp_path)) is None
+    payload["ReplacementChunks"] = [_batch_chunk("same", "ambiguous", 1, 3)]
+    assert kernel.validate("multi_replace_file_content", payload, str(tmp_path)) is not None
+
+
+def test_native_batch_event_denies_frozen_write(tmp_path: Path) -> None:
+    kernel.run_init(str(tmp_path))
+    event = {
+        "workspacePaths": [str(tmp_path)],
+        "toolCall": {
+            "name": "multi_replace_file_content",
+            "args": {
+                "TargetFile": str(tmp_path / "plans/archive/probe.md"),
+                "ReplacementChunks": [_batch_chunk("old", "new")],
+            },
+        },
+    }
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "core/statutor_core.py"), "hook"],
+        input=json.dumps(event), text=True, capture_output=True, check=True,
+    )
+    assert json.loads(result.stdout)["decision"] == "deny"
+
+
+def test_batch_tool_is_registered() -> None:
+    matcher = json.loads((ADAPTER_ROOT / "hooks.json").read_text())["statutor"]["PreToolUse"][0]["matcher"]
+    assert "multi_replace_file_content" in matcher.split("|")
+
+
+def test_batch_append_preserves_crlf_content(tmp_path: Path) -> None:
+    path = tmp_path / "DECISIONS.md"
+    original = b"settled\r\nsecond\r\n"
+    path.write_bytes(original)
+    reason = kernel.validate(
+        "multi_replace_file_content",
+        {"TargetFile": str(path), "ReplacementChunks": [
+            _batch_chunk("second", "second\r\nnew", 2, 2),
+        ]}, str(tmp_path),
+    )
+    assert reason is None
+    assert path.read_bytes() == original
+
+
 # --------------------------------------------------------------------------
 # 1. Payload & tool normalization
 # --------------------------------------------------------------------------
@@ -352,7 +456,9 @@ def test_hooks_json_valid_schema():
     spec = data["statutor"]
     assert "PreToolUse" in spec
     assert "Stop" in spec
-    assert spec["PreToolUse"][0]["matcher"] == "run_command|write_to_file|replace_file_content"
+    assert set(spec["PreToolUse"][0]["matcher"].split("|")) == {
+        "run_command", "write_to_file", "replace_file_content", "multi_replace_file_content",
+    }
     assert spec["PreToolUse"][0]["hooks"][0]["type"] == "command"
     assert spec["Stop"][0]["type"] == "command"
 

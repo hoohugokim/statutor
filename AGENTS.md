@@ -9,7 +9,7 @@ It governs itself with its own ledger (dogfood is mandatory).
 
 ## Commands
 - Dev install: `pip install -e .` (console scripts `statutor`, `statutor-doctor`)
-- Tests: `pytest -q` (baseline 203 passed/6 skipped; PyYAML-absence skips are expected)
+- Tests: `pytest -q`; full artifacts: `python scripts/release_gate.py` (PyYAML-absence skips are expected in the dependency-free suite)
 - Lint ledger: `statutor-doctor .` ; git floor: `statutor staged .`
 
 ## Conventions that differ from defaults

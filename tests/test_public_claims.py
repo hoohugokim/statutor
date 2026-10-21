@@ -20,8 +20,8 @@ def test_install_snippets_use_real_repository_and_supported_pin() -> None:
     assert f"/plugin marketplace add {expected_repo}" in root
     assert f"repo: {expected_repo}" in root
     assert f"repo: {expected_repo}" in git_adapter
-    assert "rev: v0.7.3" in root
-    assert "rev: v0.7.3" in git_adapter
+    assert "rev: v0.7.4" in root
+    assert "rev: v0.7.4" in git_adapter
     for stale in ("<path-or-url>", "<this repo>", "<your statutor repo url>", "rev: v0.2.0", "rev: v0.4.0", "rev: v0.5.0", "rev: v0.5.1", "rev: v0.6.0"):
         assert stale not in root
         assert stale not in git_adapter
@@ -34,7 +34,7 @@ def test_global_e2e_is_explicit_and_real_home_safe() -> None:
     assert "temporary profile" in root
     assert "never mutates the caller's real home" in root
     assert "never points a host at the caller's real home" in script
-    assert "never performs a\nmodel or network request" in script
+    assert "never performs a\nmodel or external network request" in script
 
 
 def test_staged_mode_is_not_advertised_as_server_or_static() -> None:
@@ -77,5 +77,7 @@ def test_automatic_adapters_are_explicit_ledger_only() -> None:
     assert "nearest `.statutor.yaml` marker" in grok
 
 
-def test_ci_no_longer_installs_unused_pyyaml() -> None:
-    assert "pyyaml" not in _read(".github/workflows/ci.yml").lower()
+def test_ci_keeps_dependency_free_matrix_and_complete_release_audit() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    assert "python -m pip install -e . pytest\n" in workflow
+    assert "python -m pip install build pytest PyYAML" in workflow

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -75,6 +76,122 @@ def test_skill_root_symlink_is_rejected(tmp_path: Path) -> None:
     linked.symlink_to(real, target_is_directory=True)
     with pytest.raises(substrate.UnsafeTree, match="real directory"):
         skills.skill_metadata(linked)
+
+
+@pytest.mark.parametrize("scope", ["portable", "claude"])
+@pytest.mark.parametrize("operation", ["apply", "uninstall"])
+def test_retargeted_skill_parent_is_never_mutated(
+    tmp_path: Path, scope: str, operation: str,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    skills.apply_skills(roots)
+    target = dict(skills._skill_targets(roots, "demo-skill"))[scope]
+    original = tmp_path / "original-skills"
+    foreign = tmp_path / "foreign-skills"
+    target.parent.rename(original)
+    shutil.copytree(original, foreign)
+    target.parent.symlink_to(foreign, target_is_directory=True)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_before = Path(roots.state_root, "global-state.json").read_bytes()
+    Path(roots.config_root, "skills/demo-skill/reference.txt").write_text("updated")
+
+    plan = (skills.skill_plan if operation == "apply"
+            else skills.skill_uninstall_plan)(roots)
+    item = next(item for item in plan["items"] if item["scope"] == scope)
+    assert item["action"] == "conflict"
+    with pytest.raises(substrate.GlobalError):
+        (skills.apply_skills if operation == "apply"
+         else skills.uninstall_skills)(roots)
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert Path(roots.state_root, "global-state.json").read_bytes() == state_before
+
+
+def test_identical_adoption_refuses_parent_retarget_after_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    canonical = Path(roots.config_root, "skills/demo-skill")
+    target = Path(roots.portable_skills, "demo-skill")
+    substrate.atomic_replace_tree(target, canonical, expected=substrate.ABSENT)
+    original = tmp_path / "original-skills"
+    foreign = tmp_path / "foreign-skills"
+    shutil.copytree(target.parent, foreign)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_path = Path(roots.state_root, "global-state.json")
+    state_before = state_path.read_bytes()
+    real_backup = substrate.create_backup
+
+    def retarget_after_backup(state_root, path, **kwargs):
+        result = real_backup(state_root, path, **kwargs)
+        if Path(path) == target:
+            target.parent.rename(original)
+            target.parent.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(substrate, "create_backup", retarget_after_backup)
+    with pytest.raises(substrate.GlobalError):
+        skills.apply_skills(roots, adopt_identical=True)
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert state_path.read_bytes() == state_before
+
+
+def test_skill_install_and_restore_support_a_stable_symlink_parent(
+    tmp_path: Path,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    parent = Path(roots.portable_skills)
+    real_parent = tmp_path / "real-skills"
+    real_parent.mkdir()
+    parent.parent.mkdir(parents=True)
+    parent.symlink_to(real_parent, target_is_directory=True)
+    skills.apply_skills(roots)
+    assert (real_parent / "demo-skill").is_dir()
+    skills.uninstall_skills(roots)
+    assert parent.is_symlink()
+    assert not (real_parent / "demo-skill").exists()
+
+
+def test_skill_post_replace_identity_failure_restores_target_and_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    parent = Path(roots.portable_skills)
+    parent.parent.mkdir(parents=True)
+    physical = tmp_path / "physical-skills"
+    physical.mkdir()
+    parent.symlink_to(physical, target_is_directory=True)
+    skills.apply_skills(roots)
+    target = physical / "demo-skill"
+    original = substrate.fingerprint(target).token
+    foreign = tmp_path / "foreign-skills"
+    shutil.copytree(physical, foreign)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_path = Path(roots.state_root, "global-state.json")
+    state_before = state_path.read_bytes()
+    Path(roots.config_root, "skills/demo-skill/reference.txt").write_text("updated")
+    replace = substrate.os.replace
+    fired = False
+
+    def retarget_after_replace(src, dst):
+        nonlocal fired
+        result = replace(src, dst)
+        if Path(dst) == target and not fired:
+            fired = True
+            parent.unlink()
+            parent.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(substrate.os, "replace", retarget_after_replace)
+    with pytest.raises(substrate.ConcurrentChange):
+        skills.apply_skills(roots)
+    assert fired
+    assert substrate.fingerprint(target).token == original
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert state_path.read_bytes() == state_before
 
 
 def test_import_is_local_new_only_and_exact(tmp_path: Path) -> None:

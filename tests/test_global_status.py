@@ -70,6 +70,19 @@ def test_empty_inventory_has_stable_schema_and_no_false_errors(tmp_path: Path) -
         roots, admin_root=tmp_path / "admin") == result
 
 
+@pytest.mark.parametrize("host", substrate.HOSTS)
+def test_filtered_doctor_does_not_orphan_other_managed_hosts(
+    tmp_path: Path, host: str,
+) -> None:
+    roots = _roots(tmp_path)
+    instructions.apply_instructions(roots)
+    result = diagnostics.global_doctor(
+        roots, hosts=[host], admin_root=tmp_path / "admin")
+    assert [item["host"] for item in result["instructions"]["hosts"]] == [host]
+    assert result["summary"]["errors"] == 0
+    assert "orphaned-receipt" not in _codes(result)
+
+
 def test_effective_instruction_precedence_and_budget(tmp_path: Path) -> None:
     roots = _roots(tmp_path)
     instructions.apply_instructions(roots, hosts=["claude", "codex"])

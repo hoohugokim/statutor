@@ -29,10 +29,12 @@ def test_install_snippets_use_real_repository_and_supported_pin() -> None:
 
 def test_global_e2e_is_explicit_and_real_home_safe() -> None:
     root = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = _read("docs/global.md")
     script = (ROOT / "scripts/global_e2e.py").read_text(encoding="utf-8")
-    assert "python scripts/global_e2e.py --json" in root
-    assert "temporary profile" in root
-    assert "never mutates the caller's real home" in root
+    assert "docs/global.md" in root
+    assert "python scripts/global_e2e.py --json" in guide
+    assert "temporary profile" in guide
+    assert "never mutates the caller's real home" in " ".join(guide.split())
     assert "never points a host at the caller's real home" in script
     assert "never performs a\nmodel or external network request" in script
 

@@ -1,245 +1,144 @@
-# statutor
+<p align="center">
+  <img src="https://raw.githubusercontent.com/hoohugokim/statutor/main/docs/branding/statutor-mark.svg" width="72" height="72" alt="">
+</p>
 
-Statutor keeps a typed project ledger for repos that more than one coding
-agent edits. Four planes each have one writer and a mutation policy. Hooks
-apply that policy before a tool writes, and `statutor staged` applies it
-again to the git index. The active policy is the committed `.statutor.yaml`.
+<h1 align="center">Statutor</h1>
 
-The name is the agent noun of *statuere*: one who enacts. One kernel serves
-Claude Code, Grok Build, OpenCode, Codex, Google Antigravity, the git
-pre-commit floor, and any harness that calls `validate`. Release notes live
-on GitHub Releases. There is no hand-maintained CHANGELOG.md.
+<p align="center"><strong>Keep project rules, handoffs, and decisions intact across coding-agent sessions.</strong></p>
 
-| Plane | Files | Policy | Enforced by |
-|---|---|---|---|
-| Constitution | AGENTS.md (+ CLAUDE.md = `@AGENTS.md`) | hard cap 200 lines | hook + git floor |
-| State | HANDOFF.md | overwrite-only, ≤ 40 lines, required sections | hook + git floor |
-| State | TASKS.md | stable T-NNNN ids; mutable checkbox/detail/order | hook + git floor + doctor |
-| Log | DECISIONS.md | append-only, insertions only, supersede-never-edit | hook + git floor |
-| Plan | ROADMAP.md, plans/ → plans/archive/ (frozen) | archive immutable | hook + git floor |
+<p align="center">
+  <a href="https://github.com/hoohugokim/statutor/actions/workflows/ci.yml"><img src="https://github.com/hoohugokim/statutor/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://pypi.org/project/statutor/"><img src="https://img.shields.io/pypi/v/statutor?color=1745be" alt="PyPI version"></a>
+  <a href="https://github.com/hoohugokim/statutor/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-6b7280" alt="MIT license"></a>
+</p>
 
-Plus a **bash guard** on every harness: shell writes to governed files
-(`>>`, `sed -i`, `tee`, ...) are denied — the editor tools are the audited
-path. Automatic adapters stay silent outside a repository explicitly marked
-by `.statutor.yaml`. A complete quoted heredoc used as `git commit -F -`
-message data is not scanned as shell code; its opener and all actual command
-lines remain guarded.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> · <a href="#choose-your-agent">Agents</a> · <a href="#how-the-ledger-works">The ledger</a> · <a href="#documentation">Documentation</a>
+</p>
 
-The policies are ordered by reversibility and the guardrails follow that
-order: a HANDOFF overwrite is reversible, a TASKS checkbox or detail edit is
-reversible with history, a DECISIONS append is irreversible by policy, and an
-archived plan is frozen (only `git mv` INTO `plans/archive/` is allowed). Text
-an agent reads or quotes — a note, a heredoc, a tool result — informs its
-proposal but never authorizes a mutation: only the declared policy under the
-committed HEAD snapshot gates a write, in-loop and at the git floor alike.
+Statutor gives a repository a small set of files for its rules, current work,
+and decision history. Hooks check supported tool calls before they write.
+The Git check validates the staged result against the committed policy.
 
-State task identities are durable: an existing ID cannot disappear or be
-renamed, while its checkbox, detail, and position may change. New IDs advance
-beyond the committed maximum. v0.4 intentionally has no pruning operation;
-completed entries remain until a separately specified identity-preserving
-archive exists (D-0016).
+```text
+Append a new decision         → allowed
+Rewrite an earlier decision  → blocked
+Edit an ordinary source file → allowed
+```
 
-## Kernel / adapter architecture
+## Quickstart
 
-    core/statutor_core.py     single-file kernel: validate() + embedded templates
-                          modes: hook | check | staged | init | trust approve
-                          (fail-open hooks; staged floor fails closed)
-    core/statutor_doctor.py   drift linter (stale stamps, budgets, unarchived plans)
-    core/statutor_global.py   global-layer roots, schemas, hashes, CAS, backups
-    core/statutor_global_cli.py  opt-in global instruction lifecycle and CLI
-    core/statutor_skills.py   portable Agent Skill validation and projections
-    hooks/stop_doctor.py  Claude Code Stop hook: runs statutor-doctor after each
-                          turn and surfaces its WARN/ERROR lines as
-                          additionalContext — non-blocking, silent when the
-                          ledger is clean or the cwd isn't a statutor ledger at all
-    pyproject.toml        pipx install → `statutor`, `statutor-doctor` on PATH
+### Install and initialize
 
-| Adapter | Mechanism | Coverage |
+Requires Python 3.10 or later. Run these commands in your project directory:
+
+```sh
+pipx install statutor
+statutor init .
+```
+
+Existing files stay unchanged. `init` creates the ledger and detects a small
+project profile. Use `statutor init . --type none` for governed files only.
+[Profiles and policy](https://github.com/hoohugokim/statutor/blob/main/docs/policy.md).
+
+### Choose your agent
+
+Connect an adapter to check supported tool calls during a session. Installing
+the CLI and initializing a ledger do not register agent hooks.
+
+| Agent | In-loop checks | Setup |
 |---|---|---|
-| Claude Code (repo root is the plugin) | PreToolUse `Write\|Edit\|Bash\|apply_patch` → `statutor hook`; Stop → `hooks/stop_doctor.py` | full in-loop + drift surfacing |
-| Google Antigravity (`adapters/antigravity/`) | PreToolUse (`run_command\|write_to_file\|replace_file_content`) → `statutor hook`; Stop → `statutor hook --stop` | full in-loop + drift surfacing |
-| OpenCode (`adapters/opencode/statutor.ts`) | 2.x `ctx.tool.hook("execute.before")`, 1.x `tool.execute.before` → `statutor check --if-ledger` | in-loop (shell/write/edit/patch)¹ |
-| Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
-| Grok Build (repo root is the plugin; `adapters/grok/`) | PreToolUse `search_replace\|write\|run_terminal_command` → `statutor hook`; Stop → `hooks/stop_doctor.py` | editor + shell in-loop, drift once per turn³ |
-| git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |
-| native (`crates/statutor/`) | `statutor-staged`, conformance-gated ≡ Python | local staged floor without Python |
-| Custom harnesses (`statutor check`, or import `validate`) | embed in your own tool dispatch | full in-loop |
+| Claude Code | File edits, shell, and patches | [Plugin commands below](#claude-code) |
+| Codex CLI | Shell and patches | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/codex/README.md) |
+| OpenCode | File edits, shell, and patches | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/opencode/README.md) |
+| Google Antigravity | File edits, batch edits, and shell | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/antigravity/README.md) |
+| Grok Build | File edits and shell | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/grok/README.md) |
+| Custom agents | Checks through the CLI or Python API | [API and architecture](https://github.com/hoohugokim/statutor/blob/main/docs/architecture.md) |
 
-¹ in-loop for OpenCode 2.x `shell`/`write`/`edit`/`patch` and 1.x
-`bash`/`write`/`edit`/`apply_patch`; the kernel parses patch envelopes
-(T-0011), with two partial-diff blind spots: required sections
-on an Update File and server-namespaced MCP tool ids — the git floor
-covers both. Subagent tool calls
-DO fire plugin hooks (verified on the 1.x hook surface, opencode v1.18.21,
-2026-08-21); the
-opposite claim (sst/opencode#5894) was a misdiagnosis, stale-closed
-2026-04-15.
-² Codex hooks are on by default since rust-v0.124.0 (2026-04-23) — the old
-`[features].codex_hooks` flag is a deprecated legacy alias, and hooks need
-a one-time trust approval (`/hooks`). Codex sends edits as tool_name
-`apply_patch` + `{"command":
-"<envelope>"}`, which `guard_apply_patch()` parses (frozen/delete/
-append-only/cap checks; see adapters/codex/). Residual gaps: MCP tools
-and Update-File section checks — so the git floor remains
-mandatory there.
-³ Grok Build reuses the Claude hook protocol. The kernel canonicalizes
-`search_replace`, `write`, `run_terminal_command`, and the Cursor-preset
-names `StrReplace` and `Shell`. A truncated tool body, or a `hashline_edit`
-with no `old_string`, is denied when the path is governed. Register the
-root plugin once (`grok plugin install`) or the `~/.grok/hooks/` snippet in
-`adapters/grok/`, not both. MCP tool ids and bash-mode `!` commands stay
-with the git floor. The capability pin is Grok Build 1.0.62.
+#### Claude Code
 
-Worker provenance (v0.5, `statutor machine`/`statutor worker`): automatic
-hooks on every host prove an **attempt** only and record nothing by
-themselves — the hook path stays fail-open. Ingress is executor- or
-custom-run (`begin` → `record --event attempt` → attributed rewrite →
-`complete --session`); `--event mutation` under an automatic harness is
-denied. `worker capabilities` reports proven surfaces and gaps per host
-(verified against Claude Code 2.1.258, Codex CLI 0.152.1, OpenCode 1.18.20,
-Grok Build 1.0.62 baselines); `worker compare <ref>` explains sibling handoffs read-only. The
-machine-local registry is a bounded ring (50 sessions per project, 20 leases
-per worktree), not an audit trail; durable provenance is the attributed
-HANDOFF lineage in Git history, which lives as long as the repository does.
+Run these slash commands inside Claude Code:
 
-## Install
+```text
+/plugin marketplace add https://github.com/hoohugokim/statutor
+/plugin install statutor@hoo-plugins --scope project
+```
 
-    pipx install statutor                # or: pip install -e .
-    statutor init .                      # scaffold any repo, any harness
-    statutor init . --type none          # governed files only; env: STATUTOR_INIT_TYPE
+The repository is the plugin. It includes `/statutor-init`, `/handoff`,
+`/decide`, and `/statutor-doctor`.
 
-    # Claude Code (this repo doubles as the plugin):
-    /plugin marketplace add https://github.com/hoohugokim/statutor
-    /plugin install statutor@hoo-plugins --scope project
-    # then: /statutor-init  /handoff  /decide  /statutor-doctor
+### Enable the Git backstop
 
-    # Grok Build — same repo, one registration (see adapters/grok/):
-    grok plugin marketplace add https://github.com/hoohugokim/statutor
-    grok plugin install statutor --trust
+Hooks cover different tools on each agent. Use the staged-index check in
+addition to your agent adapter. With [pre-commit](https://pre-commit.com/#installation)
+installed, add this entry to your project's `.pre-commit-config.yaml`:
 
-    # .pre-commit-config.yaml
-    repos:
-      - repo: https://github.com/hoohugokim/statutor
-        rev: v0.7.4
-        hooks: [{id: statutor}]
+```yaml
+repos:
+  - repo: https://github.com/hoohugokim/statutor
+    rev: v0.7.4
+    hooks: [{id: statutor}]
+```
 
-`init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,
-else `STATUTOR_INIT_TYPE`, else the first marker found in the order below, else
-`min` — and adds only empty conventional directories on top of the governed
-files, `plans/archive/`, `notes/`, and the `CLAUDE.md` bridge. Present paths
-are skipped, never overwritten, adopted, or followed; no profile writes
-policy, constitution content, or ecosystem files, and the `min` fallback
-prints and creates exactly what the pre-v0.6 `init` did.
+Then install the Git hook and check the ledger:
 
-| Profile | Adds | Selected by |
+```sh
+pre-commit install
+statutor-doctor .
+```
+
+Run `statutor staged .` to check the current index directly. A
+[native Rust binary](https://github.com/hoohugokim/statutor/blob/main/crates/statutor/README.md)
+provides the same staged checks without Python.
+[Git setup and limits](https://github.com/hoohugokim/statutor/blob/main/adapters/git/README.md).
+
+## How the ledger works
+
+Each file has a designated writer and a mutation policy. Four planes separate
+rules, current state, decisions, and plans:
+
+| Plane | Default files | Rule |
 |---|---|---|
-| `python` | `tests/` | `pyproject.toml`, `setup.py`, `setup.cfg` |
-| `rust` | `tests/` | `Cargo.toml` |
-| `node` | `test/` | `package.json` |
-| `docs` | `docs/` | `mkdocs.yml`, `_quarto.yml`, an existing `docs/` |
-| `min` | nothing further | fallback when no marker matches, or explicitly |
-| `none` | nothing, not even `plans/archive/` or `notes/` | `--type none` or `STATUTOR_INIT_TYPE=none` only |
+| Constitution | `AGENTS.md` | Human-owned rules, capped at 200 lines |
+| State | `HANDOFF.md`, `TASKS.md` | Bounded handoff; stable task IDs |
+| Log | `DECISIONS.md` | Append new decisions; preserve earlier entries |
+| Plan | `ROADMAP.md`, `plans/` | Archived plans are frozen |
 
-Per-repo policy lives in `.statutor.yaml`. In-loop checks use the committed
-HEAD snapshot; the git floor judges the transaction under both HEAD and the
-candidate index snapshot, so an unstaged or co-staged weakening cannot disable
-existing rules. The format is a strict, zero-dependency YAML subset shared by
-Python and Rust; malformed or unsupported committed/candidate policy denies.
-Before the marker's first commit, automatic hooks use embedded defaults. An
-edited worktree policy does not change hook behavior until it passes trust
-approval and becomes HEAD in a separate commit.
+The default handoff is limited to 40 lines. Task checkboxes, descriptions, and
+ordering can change; existing IDs remain. `CLAUDE.md` bridges to `AGENTS.md`.
+See [policy and trust](https://github.com/hoohugokim/statutor/blob/main/docs/policy.md)
+for writer roles, budgets, shell checks, and intentional policy changes.
 
-After bootstrap, changing `.statutor.yaml` or Statutor's exact
-`CLAUDE.md` → `@AGENTS.md` bridge requires an exact-tree Git-local receipt:
+## Optional capabilities
 
-    git add .statutor.yaml
-    statutor trust approve . --decision D-0015 --reason "why this changes trust"
-    statutor staged .
+- [Global instructions and skills](https://github.com/hoohugokim/statutor/blob/main/docs/global.md):
+  preview and manage shared instructions and skills across supported hosts.
+  This is a separate opt-in operation from project initialization.
+- [Worker provenance](https://github.com/hoohugokim/statutor/blob/main/docs/workers.md):
+  record sessions and attributed handoffs. Automatic hooks prove attempts,
+  never successful mutation, and record nothing by themselves.
 
-Approval displays the reserved diff and all staged paths, then requires the
-complete candidate tree ID. The mode-0600 receipt expires on any HEAD or index
-change and is never committed.
+## Coverage and limits
 
-## Release gate
+Automatic adapters stay silent outside a repository explicitly marked
+by `.statutor.yaml`. Hook failures allow the session to continue. The staged
+floor fails closed on invalid policy or Git errors. It inspects the local
+index; Git hooks can be bypassed with `--no-verify`.
 
-With Python `build`/`pytest`/`PyYAML`, Cargo, and Node 24/npm available, stage the candidate and
-run `python scripts/release_gate.py`. The gate tests the exact Git index, audits
-all package payloads, builds the Python sdist and wheel in scratch space,
-installs the wheel into an isolated target, and smoke-tests both console
-scripts. A tagged release additionally passes `--tag vX.Y.Z --dist-dir dist`;
-verified artifacts are copied only after every check succeeds.
+MCP tools and some partial-patch checks remain outside in-loop coverage.
+Use the Git backstop to check their staged results. Agent-specific guides
+above describe each adapter's scope and verified behavior.
 
-The v0.4 global layer also has a separate, opt-in current-host probe:
-`python scripts/global_e2e.py --json`. It pins the tested Claude, Codex, and
-OpenCode versions, rehomes every host under a temporary profile, performs no
-model or external network request, and proves native discovery where an offline surface
-exists, modified-target refusal, and exact uninstall recovery. It is not part
-of the hermetic release gate and never mutates the caller's real home.
+## Documentation
 
-The current global-layer baselines are Claude Code 2.1.296, Codex CLI 0.162.1,
-and OpenCode 2.1.1. Codex exposes the prompt catalog; OpenCode exposes its
-skill catalog through a private loopback API. Claude has no offline personal
-skill catalog probe. These checks do not extend the worker capability claims.
+[Policy and trust](https://github.com/hoohugokim/statutor/blob/main/docs/policy.md) ·
+[Architecture and API](https://github.com/hoohugokim/statutor/blob/main/docs/architecture.md) ·
+[Global layer](https://github.com/hoohugokim/statutor/blob/main/docs/global.md) ·
+[Workers](https://github.com/hoohugokim/statutor/blob/main/docs/workers.md) ·
+[Releasing](https://github.com/hoohugokim/statutor/blob/main/docs/releasing.md) ·
+[Release notes](https://github.com/hoohugokim/statutor/releases)
 
-## Portable user layer (v0.4)
-
-The global layer is opt-in and separate from project ledgers. `init` creates
-only human-owned canonical sources and versioned state; it does not change any
-host file. `plan`, `status`, and `--json` are read-only. `apply` owns only
-whole generated files it created, while `adopt HOST` backs up an existing
-regular file and imports its bytes verbatim into that host's canonical overlay.
-
-    statutor global init
-    statutor global plan --json
-    statutor global apply --host codex
-    statutor global status --json
-    statutor global doctor --json
-    statutor global adopt claude
-    statutor global uninstall --host codex
-
-    statutor global skill import ./my-skill
-    statutor global skill plan --json
-    statutor global skill apply
-    statutor global skill status --json
-    statutor global skill sync
-    statutor global skill uninstall
-
-Every mutation prints its resolved plan first. Existing unmanaged targets are
-conflicts, managed hand edits are never overwritten or removed, and uninstall
-restores the original backup. `--home`, `--config-root`, and `--state-root`
-provide explicit isolated roots for tests and alternate profiles. Codex
-overrides and OpenCode's Claude fallback are reported as precedence warnings;
-Statutor never rewrites them.
-
-Imported skills are copied to a new human-owned canonical source, then
-projected as complete trees to `$HOME/.agents/skills` and Claude's personal
-skills root. Core `SKILL.md` metadata and the complete tree are validated;
-host-specific frontmatter is preserved. Identical unmanaged trees require
-explicit `--adopt-identical`, differing or hand-edited trees are conflicts,
-and names in a foreign `.agents/.skill-lock.json` remain entirely foreign.
-OpenCode discovers the portable and Claude projections, so Statutor reports
-whether those duplicates are identical instead of creating a third native
-OpenCode copy.
-
-Unified `global status` is a fast, read-only inventory of effective instruction
-precedence, ownership, disabled/foreign skills, duplicate names, legacy/native/
-admin/plugin roots, and catalog size. `global doctor` performs the deeper full-
-tree audit: managed drift and receipt topology, generated headers, unsafe links,
-active divergent duplicates, Codex's configured instruction cap, and Statutor's
-32 KiB skill-description diagnostic budget (reported explicitly as a Statutor
-budget, not a host limit). Status exits zero when inventory completes; doctor
-exits one when the audit contains errors. Neither command invokes a host binary
-or performs a network request.
-
-## Provenance
-
-Framework doctrine distilled from: the AGENTS.md open standard
-<https://agents.md/>, Claude Code memory & hooks docs
-<https://code.claude.com/docs/en/memory>, <https://code.claude.com/docs/en/hooks>,
-Anthropic on long-running agent harnesses
-<https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents>
-and context engineering
-<https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents>,
-MADR <https://adr.github.io/madr/>, Keep a Changelog
-<https://keepachangelog.com/>, Conventional Commits
-<https://www.conventionalcommits.org/>, pre-commit <https://pre-commit.com/>.
+For local development, run `pip install -e .`, `pytest -q`, and
+`statutor-doctor .`. The kernel has no third-party dependencies; PyYAML is
+optional. [Architecture](https://github.com/hoohugokim/statutor/blob/main/docs/architecture.md)
+covers the source layout, validation modes, design references, and contribution checks.

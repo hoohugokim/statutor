@@ -1,38 +1,38 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-20 by `statutor version` (statutor 0.7.2) + `pytest -q` (594 passed, 2 skipped) + `statutor-doctor .` (clean) + a live OpenCode 2.0.32 session (frozen write and shell redirect denied, plain write allowed)
-last_worker: opencode
+last_verified: 2026-10-21 by `pytest -q` (610 passed, 2 skipped) + `statutor-doctor .` + live `grok 1.0.62 (1474f9cbdd91)`
+last_worker: grok
 last_machine: 1befd044f2ccc95033f353b2b7468adc
-handoff_id: 4d59cf6d40ca8ed459ba311cc5199795
-supersedes: 6a31c5040e947dbe6373b9e59d99723c
+handoff_id: 9785fb98991890e23190f9fc76744a28
+supersedes: 220024407db275c3db219f4a4da832eb
 
 ## Goal
-Ship the OpenCode 2.x adapter (D-0027, T-0047) on top of the pending v0.7.2
-Antigravity scoping work (T-0046), then commit and release.
+Publish patch 0.7.3 (D-0028, T-0048): Grok vocabulary map, README lead,
+and GitHub Releases from the existing tags through v0.7.3.
 
 ## Last verified state
-- `adapters/opencode/statutor.ts` default-exports `{ id, setup, server }`:
-  `ctx.tool.hook("execute.before")` (2.x) and `"tool.execute.before"` (1.x);
-  maps `shell`/`path`/`patchText` to the kernel's names; argv spawn, deny
-  only on exit code 2, fail open otherwise.
-- Live 2.0.32 session: a frozen `write` and a `shell` redirect were denied,
-  an ordinary write passed, and a directory without `.statutor.yaml` stayed
-  silent. The `server()` path behaves identically in the test harness.
-- `tests/test_adapter_opencode.py` adds 7 checks; npm adapter bumped to 0.2.0;
-  release-gate and payload tests aligned. Full suite 594 passed/2 skipped.
-- The v0.7.2 Antigravity work (T-0046) is still uncommitted.
+- Kernel maps `write`, `search_replace`, `run_terminal_command`, `StrReplace`,
+  and `Shell`. One Stop continues on `end_turn`; the next Stop and `shutdown`
+  stay silent. Live 1.0.62 probe: append-only write denied, HANDOFF shell
+  redirect denied, ordinary write allowed, unmarked repo silent.
+- README lead names the four planes and the harnesses. Pre-commit pin is
+  v0.7.3. No v0.7.0 tag: that number lived on two docs commits. v0.7.1 is
+  the first tagged 0.7 release and carries the Antigravity adapter.
+- Suite 610 passed / 2 skipped. npm stays 0.2.0; cargo stays 0.1.1.
 
 ## Next action
-1. Commit v0.7.2 plus T-0047/D-0027; publish `statutor@0.2.0` (human), then
-   repoint the global config to `"plugins": ["statutor@0.2.0"]`.
+PyPI publish of 0.7.3 and npm publish of `statutor@0.2.0` remain human steps.
+Reinstall `statutor@hoo-plugins` so sessions stop loading the 0.6.0 cache.
 
 ## Gotchas
-- 2.x config entries need a package name or a directory; a bare `.ts` path
-  logs `configured plugin path must be a directory`.
-- 2.x validates the default export; a function default or named-only export
-  fails at load, not at import.
+- Enabled plugin cache is `~/.claude/plugins/cache/hoo-plugins/statutor/0.6.0`.
+  Its doctor rejects `last_worker: grok`. A project `.grok/hooks` snippet and
+  that plugin both fire.
+- The probe saw no subagent PreToolUse. MCP `use_tool` and bash-mode `!`
+  stay on the git floor.
 
 ## Do not touch
-Embedded TEMPLATES/INIT_PROFILES; root `.pre-commit-hooks.yaml`; plugin
-layout; plans/archive.
+Embedded TEMPLATES/INIT_PROFILES; plans/archive; the DECISIONS.md header;
+root `.pre-commit-hooks.yaml`. Untracked `_local/`, `assets/`, loose
+`notes/`, `.agents/`, `plans/v0.4-dogfood.pdf`.

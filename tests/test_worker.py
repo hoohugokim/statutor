@@ -108,12 +108,13 @@ def test_unknown_role_survives_without_inference(tmp_path: Path) -> None:
     assert begun["session"]["origin_harness"] == "unknown"
 
 
-def test_automatic_harness_cannot_record_mutation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("harness", ["claude", "grok"])
+def test_automatic_harness_cannot_record_mutation(tmp_path: Path, harness: str) -> None:
     state = _state(tmp_path)
     repo = _repo(tmp_path, "repo")
-    begun = worker.worker_begin(state, str(repo), harness="claude")
+    begun = worker.worker_begin(state, str(repo), harness=harness)
     with pytest.raises(worker.WorkerError):
-        worker.worker_record(state, str(repo), harness="claude",
+        worker.worker_record(state, str(repo), harness=harness,
                              event="mutation",
                              session_id=begun["session"]["session_id"])
 

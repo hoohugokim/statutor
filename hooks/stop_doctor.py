@@ -85,6 +85,9 @@ def main() -> int:
     is_antigravity = ("executionNum" in event or "workspacePaths" in event
                       or "terminationReason" in event)
 
+    reason = event.get("reason")
+    if isinstance(reason, str) and reason != "end_turn":
+        return 0  # Grok's session-end Stop is observe-only; do not continue a turn
     if event.get("stop_hook_active"):
         return 0  # already continued once this turn: surface once, then get out of the way
     if event.get("executionNum", 1) > 1:

@@ -30,7 +30,7 @@ from typing import Mapping
 import statutor_global as substrate
 
 SCHEMA_VERSION = 1
-HARNESSES = ("claude", "codex", "opencode", "antigravity", "gemini", "custom", "human", "unknown")
+HARNESSES = ("claude", "codex", "opencode", "antigravity", "gemini", "grok", "custom", "human", "unknown")
 ROLES = ("primary", "subagent", "unknown")
 EVENTS = ("activity", "attempt", "mutation")
 BASES = ("completed", "mutation", "activity", "attempt")
@@ -97,6 +97,22 @@ CAPABILITIES: dict[str, dict[str, object]] = {
         "role_signal": False,
         "session_correlation": "host session id when exposed, else generated",
         "note": "Alias/sibling harness for Google Antigravity / Gemini ecosystem.",
+    },
+    "grok": {
+        "verified_against": "Grok Build 1.0.62",
+        "attempt_surface": "PreToolUse hook (search_replace|write|run_terminal_command)",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host session id when exposed, else generated",
+        "note": "One Stop registration surfaces drift once per turn; the "
+                "next Stop, and a Stop whose reason is not end_turn, stay "
+                "silent. A second registration repeats that one "
+                "continuation. Completion is executor-run `worker complete`. "
+                "MCP tool ids and bash-mode commands never reach the "
+                "matcher. Subagent PreToolUse is unproved; the 1.0.62 probe "
+                "saw no child session.",
     },
     "custom": {
         "verified_against": "n/a (caller-proved)",
@@ -831,7 +847,7 @@ def worker_record(state_root: Path, cwd: str, *, harness: str, event: str,
     if origin_harness not in HARNESSES:
         raise WorkerError(f"unsupported origin_harness: {origin_harness}")
     ledger = _require_ledger(cwd)
-    if event == "mutation" and harness in ("claude", "codex", "opencode"):
+    if event == "mutation" and harness in ("claude", "codex", "opencode", "grok"):
         # PreToolUse/tool-before proves an attempt, never a confirmed
         # mutation; automatic adapters must not record mutation directly.
         raise WorkerError("automatic harnesses prove attempt, never mutation; "

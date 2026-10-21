@@ -6,10 +6,14 @@ mutation policies enforced here rather than in prose.
 
 Entry modes (all share the same validate() core):
 
-  statutor hook           Claude Code / Codex CLI hook protocol:
+  statutor hook           Claude Code / Codex / Grok Build hook protocol:
                           stdin JSON in, permissionDecision JSON out.
                           Silent unless the nearest ancestor carries the
                           explicit `.statutor.yaml` ledger marker.
+                          Grok names (search_replace, write,
+                          run_terminal_command, and the Cursor-preset
+                          StrReplace/Shell forms) canonicalize onto
+                          edit/write/bash. See adapters/grok/.
                           (Codex's PreToolUse mirrors Claude's schema and
                           also fires for apply_patch, sending edits as
                           tool_input {"command": "<apply_patch envelope>"}.
@@ -48,7 +52,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 
 # --------------------------------------------------------------------------
 # policy
@@ -331,8 +335,17 @@ def _match_rule(rel_path: str, policy: dict) -> dict | None:
     return None
 
 
-def _norm(payload: dict) -> dict:
-    """Normalize harness arg names (Claude snake_case, OpenCode camelCase, Antigravity PascalCase)."""
+_SHELL_ALIASES = frozenset({
+    "run_command", "run_terminal_command", "run_terminal_cmd", "shell",
+})
+# Edits whose body is not Claude's Edit shape. An empty old_string on these
+# names cannot fall through: that path allows a governed edit the kernel
+# never reconstructed. Claude's own "edit" name keeps the historical behavior.
+_PROVED_EDIT_ALIASES = frozenset({"search_replace", "strreplace", "hashline_edit"})
+
+
+def _norm(payload: dict, *, copy_path: bool = False) -> dict:
+    """Normalize harness arg names (Claude snake_case, OpenCode camelCase, Antigravity PascalCase, Grok/Cursor)."""
     out = dict(payload or {})
     mappings = (
         ("filePath", "file_path"),
@@ -346,11 +359,44 @@ def _norm(payload: dict) -> dict:
         ("AllowMultiple", "replace_all"),
         ("Overwrite", "overwrite"),
         ("Append", "append"),
+        ("contents", "content"),
     )
+    if copy_path:
+        mappings = mappings + (("path", "file_path"),)
     for a, b in mappings:
         if a in out and b not in out:
             out[b] = out[a]
     return out
+
+
+def _canonicalize(tool: str, payload: dict) -> tuple[str, dict, str]:
+    """Return `(canonical tool, normalized payload, original lower name)`."""
+    original = (tool or "").lower()
+    canonical = original
+    if original in _SHELL_ALIASES:
+        canonical = "bash"
+    elif original == "write_to_file":
+        canonical = "write"
+    elif original in ("replace_file_content", "search_replace", "strreplace"):
+        canonical = "edit"
+    copy_path = canonical in ("write", "edit") or original == "hashline_edit"
+    normalized = _norm(payload, copy_path=copy_path)
+    if original == "hashline_edit" and normalized.get("old_string"):
+        canonical = "edit"
+    return canonical, normalized, original
+
+
+def _governed_rel(
+    payload: dict, cwd: str, policy: dict, root: str,
+) -> str | None:
+    """Policy-relative path when `file_path` matches a governed rule."""
+    file_path = payload.get("file_path", "")
+    if not file_path:
+        return None
+    _absolute, rel = _resolve_tool_path(file_path, cwd, root)
+    if _match_rule(rel, policy) is None:
+        return None
+    return rel
 
 
 def _resolve_tool_path(
@@ -430,14 +476,14 @@ def validate(
 ) -> str | None:
     root = os.path.abspath(policy_root or cwd)
     policy = policy or load_policy(root)
-    tool = tool.lower()
-    if tool == "run_command":
-        tool = "bash"
-    elif tool == "write_to_file":
-        tool = "write"
-    elif tool == "replace_file_content":
-        tool = "edit"
-    payload = _norm(payload)
+    tool, payload, original = _canonicalize(tool, payload)
+    if original in _PROVED_EDIT_ALIASES and not payload.get("old_string"):
+        rel = _governed_rel(payload, cwd, policy, root)
+        if rel is not None:
+            return (f"{rel} edit cannot be proved safe: {original} carried no "
+                    "old_string. Retry with the existing text in old_string, "
+                    "or use write with the full file.")
+        return None
 
     if tool == "bash":
         return guard_bash(payload.get("command", ""), policy)
@@ -814,19 +860,71 @@ def _policy_authority_note(root: str) -> str:
             "commit policy changes separately before retrying.")
 
 
-def _automatic_reason(tool: str, payload: dict, cwd: str) -> str | None:
+def _truncated_input(event: dict) -> bool:
+    flag = event.get("tool_input_truncated")
+    if flag is None:
+        flag = event.get("toolInputTruncated", False)
+    return flag is True
+
+
+def _event_tool(event: dict) -> tuple[str, dict]:
+    """Read Claude snake_case keys, then Grok's camelCase twins."""
+    tool = event.get("tool_name") or event.get("toolName") or ""
+    payload = event.get("tool_input")
+    if payload is None:
+        payload = event.get("toolInput")
+    if not isinstance(payload, dict):
+        payload = {}
+    return str(tool), payload
+
+
+def _truncation_reason(
+    tool: str, payload: dict, cwd: str, root: str, policy: dict,
+) -> str | None:
+    """Deny when a cut body would hide a governed mutation or a shell write."""
+    canonical, normalized, _original = _canonicalize(tool, payload)
+    if canonical == "bash":
+        return ("tool input was truncated; a shell command inside a ledger "
+                "cannot be proved safe.")
+    if canonical not in ("write", "edit", "hashline_edit"):
+        return None
+    rel = _governed_rel(normalized, cwd, policy, root)
+    if rel is None:
+        return None
+    return (f"{rel} tool input was truncated; the mutation cannot be proved "
+            "safe.")
+
+
+def _automatic_reason(
+    tool: str, payload: dict, cwd: str, *, truncated: bool = False,
+) -> str | None:
     """Validate one automatic adapter event only inside an opted-in ledger."""
     root = find_ledger_root(cwd)
     if root is None:
         return None
-    reason = validate(
-        tool, payload, cwd, policy=load_policy(root), policy_root=root)
+    policy = load_policy(root)
+    if truncated:
+        reason = _truncation_reason(tool, payload, cwd, root, policy)
+    else:
+        reason = None
+    if reason is None:
+        reason = validate(
+            tool, payload, cwd, policy=policy, policy_root=root)
     if reason:
         return f"{reason} {_policy_authority_note(root)}"
     return None
 
+
+def _stop_reason_is_session_end(event: dict) -> bool:
+    """Grok fires an extra observe-only Stop at session end."""
+    reason = event.get("reason")
+    return isinstance(reason, str) and reason != "end_turn"
+
+
 def _run_stop_event(event: dict, is_antigravity: bool) -> int:
     try:
+        if _stop_reason_is_session_end(event):
+            return 0
         if event.get("stop_hook_active"):
             return 0
         if event.get("executionNum", 1) > 1:
@@ -959,10 +1057,10 @@ def run_hook(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        tool = event.get("tool_name", "")
-        payload = event.get("tool_input", {}) or {}
+        tool, payload = _event_tool(event)
         cwd = event.get("cwd", os.getcwd())
-        reason = _automatic_reason(tool, payload, cwd)
+        reason = _automatic_reason(
+            tool, payload, cwd, truncated=_truncated_input(event))
         if reason:
             if is_antigravity:
                 print(json.dumps({

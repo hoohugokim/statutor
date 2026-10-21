@@ -48,10 +48,11 @@ Non-negotiable rules:
 5. **Procedures live in skills/commands**, never in the constitution.
 6. **Single writer per file.** Subagents use `notes/<task-id>.md`.
 7. **No shell writes to governed files** (`>>`, `sed -i`, ...) — the bash
-   guard denies them; use the editor tools.
-8. **Drift surfaces at Stop, not just in-loop.** Claude Code's Stop hook
+   guard denies them; use the editor tools. On Grok Build those tools are
+   `search_replace`, `write`, and `run_terminal_command`.
+8. **Drift surfaces at Stop, not just in-loop.** The host Stop hook
    (`hooks/stop_doctor.py`) runs `statutor-doctor` after each turn and adds its
-   WARN/ERROR lines as context — non-blocking, silent on a clean ledger.
+   WARN/ERROR lines as context — once per turn, silent on a clean ledger.
 
 ## Scaffolding (/statutor-init or on request)
 

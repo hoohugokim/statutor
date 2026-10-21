@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Write|Edit|Bash|apply_patch)$",
+        "matcher": "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|StrReplace|Shell)$",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/statutor_core.py\" hook" }
         ]
@@ -14,8 +14,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop_doctor.py\"",
-            "timeout": 30,
-            "statusMessage": "Checking statutor ledger for drift..."
+            "timeout": 30
           }
         ]
       }

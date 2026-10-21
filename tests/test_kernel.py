@@ -1131,6 +1131,130 @@ def test_hook_mode_aliasing(tmp_path, args):
     assert "DECISIONS.md" in data["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def _grok_hook(tmp_path, event: dict) -> subprocess.CompletedProcess:
+    mark_ledger(tmp_path)
+    event.setdefault("cwd", str(tmp_path))
+    return run_kernel(["hook"], input_str=json.dumps(event))
+
+
+def test_grok_search_replace_denies_decision_deletion(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "tool_name": "search_replace",
+        "tool_input": {"file_path": str(tmp_path / "DECISIONS.md"),
+                       "old_string": "kept paragraph", "new_string": "gone"},
+    })
+    data = _hook_deny_json(result)
+    assert "append-only" in data["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_grok_search_replace_allows_pure_insertion(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "tool_name": "search_replace",
+        "tool_input": {"file_path": str(tmp_path / "DECISIONS.md"),
+                       "old_string": "kept", "new_string": "kept\n\n## D-0002\n"},
+    })
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_grok_write_over_constitution_cap_denies(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "tool_name": "write",
+        "tool_input": {"file_path": str(tmp_path / "AGENTS.md"), "content": lines(201)},
+    })
+    data = _hook_deny_json(result)
+    assert "hard cap" in data["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_grok_write_silent_outside_unmarked_ledger(tmp_path):
+    event = {"tool_name": "write",
+             "tool_input": {"file_path": str(tmp_path / "AGENTS.md"), "content": lines(201)},
+             "cwd": str(tmp_path)}
+    result = run_kernel(["hook"], input_str=json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_grok_shell_redirect_denies_and_read_is_silent(tmp_path):
+    denied = _grok_hook(tmp_path, {
+        "tool_name": "run_terminal_command",
+        "tool_input": {"command": "echo x >> HANDOFF.md"},
+    })
+    data = _hook_deny_json(denied)
+    assert "HANDOFF.md" in data["hookSpecificOutput"]["permissionDecisionReason"]
+    allowed = _grok_hook(tmp_path, {
+        "tool_name": "run_terminal_command",
+        "tool_input": {"command": "git status"},
+    })
+    assert allowed.stdout == ""
+
+
+def test_grok_cursor_preset_names(tmp_path):
+    denied = _grok_hook(tmp_path, {
+        "tool_name": "StrReplace",
+        "tool_input": {"path": str(tmp_path / "DECISIONS.md"),
+                       "old_string": "kept", "new_string": "gone"},
+    })
+    assert "append-only" in _hook_deny_json(denied)["hookSpecificOutput"]["permissionDecisionReason"]
+    shell = _grok_hook(tmp_path, {
+        "tool_name": "Shell",
+        "tool_input": {"command": "echo x >> HANDOFF.md"},
+    })
+    assert "HANDOFF.md" in _hook_deny_json(shell)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_grok_camel_case_envelope_denies(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "toolName": "search_replace",
+        "toolInput": {"file_path": str(tmp_path / "DECISIONS.md"),
+                      "old_string": "kept", "new_string": "gone"},
+    })
+    assert "append-only" in _hook_deny_json(result)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_grok_truncated_governed_write_denies_other_paths_stay_silent(tmp_path):
+    denied = _grok_hook(tmp_path, {
+        "tool_name": "write",
+        "tool_input": {"file_path": str(tmp_path / "AGENTS.md"), "content": "short\n"},
+        "toolInputTruncated": True,
+    })
+    assert "truncated" in _hook_deny_json(denied)["hookSpecificOutput"]["permissionDecisionReason"]
+    allowed = _grok_hook(tmp_path, {
+        "tool_name": "write",
+        "tool_input": {"file_path": str(tmp_path / "notes" / "scratch.md"), "content": "x\n"},
+        "toolInputTruncated": True,
+    })
+    assert allowed.stdout == ""
+
+
+def test_grok_hashline_without_old_string_denies_governed_path(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "tool_name": "hashline_edit",
+        "tool_input": {"file_path": str(tmp_path / "TASKS.md"), "content": "- [ ] T-0001 x\n"},
+    })
+    reason = _hook_deny_json(result)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "cannot be proved safe" in reason
+    assert "TASKS.md" in reason
+
+
+def test_claude_edit_without_old_string_stays_allowed(tmp_path):
+    result = _grok_hook(tmp_path, {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(tmp_path / "DECISIONS.md"),
+                       "old_string": "", "new_string": "x"},
+    })
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_hook_stop_session_end_is_silent(tmp_path):
+    mark_ledger(tmp_path)
+    event = {"cwd": str(tmp_path), "reason": "channel_closed", "stop_hook_active": False}
+    result = run_kernel(["hook", "--stop"], input_str=json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
 def test_hook_fail_open_covers_kernel_bug(tmp_path):
     mark_ledger(tmp_path)
     directory = tmp_path / "DECISIONS.md"
@@ -1956,5 +2080,10 @@ def test_version_cli(monkeypatch, capsys):
     assert excinfo.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out.startswith("statutor ")
-    assert out.split()[1] in (statutor_core.__version__, "0.7.2")
+    try:
+        import importlib.metadata
+        expected = importlib.metadata.version("statutor")
+    except Exception:
+        expected = statutor_core.__version__
+    assert out.split()[1] == expected
 

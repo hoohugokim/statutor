@@ -219,6 +219,34 @@ def test_stale_ledger_emits_parseable_stop_json(tmp_path):
 # loop guard: stop_hook_active
 # --------------------------------------------------------------------------
 
+def test_session_end_reason_is_silent(tmp_path):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {"cwd": str(tmp_path), "stop_hook_active": False, "reason": "channel_closed"}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_end_turn_reason_still_surfaces_drift(tmp_path):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {"cwd": str(tmp_path), "stop_hook_active": False, "reason": "end_turn"}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert "additionalContext" in data["hookSpecificOutput"]
+
+
+def test_end_turn_second_stop_stays_silent(tmp_path):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {"cwd": str(tmp_path), "stop_hook_active": True, "reason": "end_turn"}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
 def test_silent_when_stop_hook_already_active(tmp_path):
     _scaffold(tmp_path)
     (tmp_path / "TASKS.md").unlink()

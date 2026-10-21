@@ -113,6 +113,14 @@ def test_old_handoff_without_block_warns_only(tmp_path: Path) -> None:
     assert "still valid" in out
 
 
+def test_grok_worker_attribution_passes_doctor(tmp_path: Path) -> None:
+    root = _ledger(tmp_path, _handoff(
+        TODAY, "last_worker: grok\nhandoff_id: none\nsupersedes: none\n"))
+    out, code = _doctor_out(root)
+    assert code == 0
+    assert "last_worker" not in out
+
+
 def test_partial_block_is_tolerated(tmp_path: Path) -> None:
     root = _ledger(tmp_path, _handoff(TODAY, "handoff_id: hA\nsupersedes: h0\n"))
     out, code = _doctor_out(root)

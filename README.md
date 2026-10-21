@@ -1,9 +1,14 @@
 # statutor
 
-Typed project-ledger framework for agentic repos. A *statutor* is one who
-enacts (agent noun of *statuere*) — which is the thesis: repo instruction
-files are a state machine of typed registers, each with a mutation policy
-and exactly one writer, enforced by hooks and git, not by prose.
+Statutor keeps a typed project ledger for repos that more than one coding
+agent edits. Four planes each have one writer and a mutation policy. Hooks
+apply that policy before a tool writes, and `statutor staged` applies it
+again to the git index. The active policy is the committed `.statutor.yaml`.
+
+The name is the agent noun of *statuere*: one who enacts. One kernel serves
+Claude Code, Grok Build, OpenCode, Codex, Google Antigravity, the git
+pre-commit floor, and any harness that calls `validate`. Release notes live
+on GitHub Releases. There is no hand-maintained CHANGELOG.md.
 
 | Plane | Files | Policy | Enforced by |
 |---|---|---|---|
@@ -18,8 +23,7 @@ Plus a **bash guard** on every harness: shell writes to governed files
 path. Automatic adapters stay silent outside a repository explicitly marked
 by `.statutor.yaml`. A complete quoted heredoc used as `git commit -F -`
 message data is not scanned as shell code; its opener and all actual command
-lines remain guarded. No hand-maintained CHANGELOG.md: git log + conventional
-commits.
+lines remain guarded.
 
 The policies are ordered by reversibility and the guardrails follow that
 order: a HANDOFF overwrite is reversible, a TASKS checkbox or detail edit is
@@ -56,6 +60,7 @@ archive exists (D-0016).
 | Google Antigravity (`adapters/antigravity/`) | PreToolUse (`run_command\|write_to_file\|replace_file_content`) → `statutor hook`; Stop → `statutor hook --stop` | full in-loop + drift surfacing |
 | OpenCode (`adapters/opencode/statutor.ts`) | 2.x `ctx.tool.hook("execute.before")`, 1.x `tool.execute.before` → `statutor check --if-ledger` | in-loop (shell/write/edit/patch)¹ |
 | Codex CLI (`adapters/codex/`) | PreToolUse (Claude-compatible protocol) → `statutor hook` | bash guard + apply_patch² |
+| Grok Build (repo root is the plugin; `adapters/grok/`) | PreToolUse `search_replace\|write\|run_terminal_command` → `statutor hook`; Stop → `hooks/stop_doctor.py` | editor + shell in-loop, drift once per turn³ |
 | git (`adapters/git/`, `.pre-commit-hooks.yaml`) | `statutor staged` in local pre-commit and CI | staged-index backstop |
 | native (`crates/statutor/`) | `statutor-staged`, conformance-gated ≡ Python | local staged floor without Python |
 | Custom harnesses (`statutor check`, or import `validate`) | embed in your own tool dispatch | full in-loop |
@@ -77,6 +82,13 @@ a one-time trust approval (`/hooks`). Codex sends edits as tool_name
 append-only/cap checks; see adapters/codex/). Residual gaps: MCP tools
 and Update-File section checks — so the git floor remains
 mandatory there.
+³ Grok Build reuses the Claude hook protocol. The kernel canonicalizes
+`search_replace`, `write`, `run_terminal_command`, and the Cursor-preset
+names `StrReplace` and `Shell`. A truncated tool body, or a `hashline_edit`
+with no `old_string`, is denied when the path is governed. Register the
+root plugin once (`grok plugin install`) or the `~/.grok/hooks/` snippet in
+`adapters/grok/`, not both. MCP tool ids and bash-mode `!` commands stay
+with the git floor. The capability pin is Grok Build 1.0.62.
 
 Worker provenance (v0.5, `statutor machine`/`statutor worker`): automatic
 hooks on every host prove an **attempt** only and record nothing by
@@ -84,8 +96,8 @@ themselves — the hook path stays fail-open. Ingress is executor- or
 custom-run (`begin` → `record --event attempt` → attributed rewrite →
 `complete --session`); `--event mutation` under an automatic harness is
 denied. `worker capabilities` reports proven surfaces and gaps per host
-(verified against Claude Code 2.1.258, Codex CLI 0.152.1, OpenCode 1.18.20
-baselines); `worker compare <ref>` explains sibling handoffs read-only. The
+(verified against Claude Code 2.1.258, Codex CLI 0.152.1, OpenCode 1.18.20,
+Grok Build 1.0.62 baselines); `worker compare <ref>` explains sibling handoffs read-only. The
 machine-local registry is a bounded ring (50 sessions per project, 20 leases
 per worktree), not an audit trail; durable provenance is the attributed
 HANDOFF lineage in Git history, which lives as long as the repository does.
@@ -101,10 +113,14 @@ HANDOFF lineage in Git history, which lives as long as the repository does.
     /plugin install statutor@hoo-plugins --scope project
     # then: /statutor-init  /handoff  /decide  /statutor-doctor
 
+    # Grok Build — same repo, one registration (see adapters/grok/):
+    grok plugin marketplace add https://github.com/hoohugokim/statutor
+    grok plugin install statutor --trust
+
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.6.0
+        rev: v0.7.3
         hooks: [{id: statutor}]
 
 `init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,

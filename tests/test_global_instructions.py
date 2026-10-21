@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -237,3 +238,58 @@ def test_cli_dispatch_uses_only_explicit_fake_roots(tmp_path: Path) -> None:
     assert data["items"][0]["action"] == "noop"
     assert (fake_home / ".codex/AGENTS.md").is_file()
     assert not (tmp_path / "decoy-home/.codex/AGENTS.md").exists()
+
+
+@pytest.mark.parametrize("operation", ["apply", "uninstall"])
+def test_retargeted_instruction_parent_is_never_mutated(
+    tmp_path: Path, operation: str,
+) -> None:
+    roots = _roots(tmp_path)
+    lifecycle.global_init(roots)
+    lifecycle.apply_instructions(roots, hosts=["codex"])
+    target = lifecycle.instruction_target(roots, "codex")
+    original = tmp_path / "original-codex"
+    foreign = tmp_path / "foreign-codex"
+    target.parent.rename(original)
+    shutil.copytree(original, foreign)
+    target.parent.symlink_to(foreign, target_is_directory=True)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_before = Path(roots.state_root, "global-state.json").read_bytes()
+    Path(roots.config_root, "AGENTS.md").write_text("# Updated common\n")
+
+    plan = (lifecycle.instruction_plan if operation == "apply"
+            else lifecycle.uninstall_plan)(roots, hosts=["codex"])
+    assert plan["items"][0]["action"] == "conflict"
+    mutate = (lifecycle.apply_instructions if operation == "apply"
+              else lifecycle.uninstall_instructions)
+    with pytest.raises(substrate.GlobalError):
+        mutate(roots, hosts=["codex"])
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert Path(roots.state_root, "global-state.json").read_bytes() == state_before
+
+
+def test_instruction_parent_retargeted_after_plan_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roots = _roots(tmp_path)
+    lifecycle.global_init(roots)
+    lifecycle.apply_instructions(roots, hosts=["codex"])
+    target = lifecycle.instruction_target(roots, "codex")
+    original = tmp_path / "original-codex"
+    foreign = tmp_path / "foreign-codex"
+    shutil.copytree(target.parent, foreign)
+    foreign_before = substrate.fingerprint(foreign).token
+    Path(roots.config_root, "AGENTS.md").write_text("# Updated common\n")
+    real_backup = substrate.create_backup
+
+    def retarget_after_backup(state_root, path, **kwargs):
+        result = real_backup(state_root, path, **kwargs)
+        if Path(path) == target:
+            target.parent.rename(original)
+            target.parent.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(substrate, "create_backup", retarget_after_backup)
+    with pytest.raises(substrate.GlobalError):
+        lifecycle.apply_instructions(roots, hosts=["codex"])
+    assert substrate.fingerprint(foreign).token == foreign_before

@@ -234,3 +234,125 @@ def test_registry_mode_0600(tmp_path: Path) -> None:
         worker._registry_path(state, project_id).lstat().st_mode)
     assert mode == 0o600
     _ = substrate.ABSENT  # substrate reuse is intentional
+
+
+@pytest.mark.parametrize("harness,events", [
+    ("claude", {"activity", "attempt"}),
+    ("codex", {"activity", "attempt"}),
+    ("opencode", {"activity", "attempt"}),
+    ("antigravity", {"activity", "attempt"}),
+    ("gemini", {"activity", "attempt"}),
+    ("grok", {"activity", "attempt"}),
+    ("custom", {"activity", "attempt", "mutation"}),
+    ("human", {"activity", "attempt", "mutation"}),
+    ("unknown", {"activity"}),
+])
+@pytest.mark.parametrize("event", ["activity", "attempt", "mutation"])
+def test_record_accepts_only_proven_harness_events(
+        tmp_path: Path, harness: str, events: set[str], event: str) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    begun = worker.worker_begin(state, str(repo), harness=harness)
+    sid = begun["session"]["session_id"]
+    registry = state / "projects" / begun["project_id"] / "workers.json"
+    before = registry.read_bytes()
+    if event not in events:
+        with pytest.raises(worker.WorkerError):
+            worker.worker_record(state, str(repo), harness=harness,
+                                 event=event, session_id=sid)
+        assert registry.read_bytes() == before
+        return
+    recorded = worker.worker_record(state, str(repo), harness=harness,
+                                    event=event, session_id=sid)
+    assert recorded["record"]["harness"] == harness
+    assert worker.worker_show(state, str(repo), basis=event)["record"] == recorded["record"]
+
+
+@pytest.mark.parametrize("operation", ["record", "complete"])
+@pytest.mark.parametrize("destination", ["linked", "nested", "parent"])
+def test_session_cannot_cross_worktree_or_ledger(
+        tmp_path: Path, operation: str, destination: str) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    if destination == "linked":
+        target = tmp_path / "linked"
+        _git(repo, "worktree", "add", str(target), "-q", "--detach")
+        source = repo
+    else:
+        nested = repo / "nested"
+        nested.mkdir()
+        (nested / ".statutor.yaml").write_text("bash_guard: true\n")
+        (nested / "HANDOFF.md").write_bytes((repo / "HANDOFF.md").read_bytes())
+        source, target = (repo, nested) if destination == "nested" else (nested, repo)
+    begun = worker.worker_begin(state, str(source), harness="claude")
+    sid = begun["session"]["session_id"]
+    registry = state / "projects" / begun["project_id"] / "workers.json"
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="session.*(worktree|ledger)"):
+        if operation == "record":
+            worker.worker_record(state, str(target), harness="claude",
+                                 event="attempt", session_id=sid)
+        else:
+            worker.worker_complete(state, str(target), session_id=sid)
+    assert registry.read_bytes() == before
+    leases = worker.worker_active(state, str(source), worktree_only=True)["leases"]
+    assert [lease["session_id"] for lease in leases] == [sid]
+
+
+@pytest.mark.parametrize("harness", ["human", "custom"])
+def test_session_harness_cannot_be_relabelled_to_claim_mutation(
+        tmp_path: Path, harness: str) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    begun = worker.worker_begin(state, str(repo), harness="claude")
+    sid = begun["session"]["session_id"]
+    registry = state / "projects" / begun["project_id"] / "workers.json"
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="session.*harness"):
+        worker.worker_record(state, str(repo), harness=harness,
+                             event="mutation", session_id=sid)
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize("git_repo", [True, False])
+def test_session_can_record_and_complete_from_same_ledger_subdirectory(
+        tmp_path: Path, git_repo: bool) -> None:
+    state = _state(tmp_path)
+    if git_repo:
+        repo = _repo(tmp_path, "repo")
+    else:
+        repo = tmp_path / "ledger"
+        repo.mkdir()
+        (repo / ".statutor.yaml").write_text("bash_guard: true\n")
+        (repo / "HANDOFF.md").write_text("# HANDOFF\n")
+    subdir = repo / "src"
+    subdir.mkdir()
+    begun = worker.worker_begin(state, str(subdir), harness="custom")
+    sid = begun["session"]["session_id"]
+    recorded = worker.worker_record(state, str(repo), harness="custom",
+                                    event="mutation", session_id=sid)
+    done = worker.worker_complete(state, str(subdir), session_id=sid)
+    assert recorded["worktree_id"] == begun["worktree_id"] == done["worktree_id"]
+    assert worker.worker_active(state, str(repo))["leases"] == []
+
+
+@pytest.mark.parametrize("operation", ["record", "complete"])
+def test_legacy_session_remains_readable_but_requires_new_begin_for_ingress(
+        tmp_path: Path, operation: str) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    begun = worker.worker_begin(state, str(repo), harness="claude")
+    sid = begun["session"]["session_id"]
+    registry = state / "projects" / begun["project_id"] / "workers.json"
+    legacy = json.loads(registry.read_text())
+    legacy["sessions"][sid].pop("ledger_root", None)
+    registry.write_text(json.dumps(legacy))
+    before = registry.read_bytes()
+    assert worker.worker_active(state, str(repo))["leases"][0]["session_id"] == sid
+    with pytest.raises(worker.WorkerError, match="begin a new session"):
+        if operation == "record":
+            worker.worker_record(state, str(repo), harness="claude",
+                                 event="attempt", session_id=sid)
+        else:
+            worker.worker_complete(state, str(repo), session_id=sid)
+    assert registry.read_bytes() == before

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -75,6 +76,35 @@ def test_skill_root_symlink_is_rejected(tmp_path: Path) -> None:
     linked.symlink_to(real, target_is_directory=True)
     with pytest.raises(substrate.UnsafeTree, match="real directory"):
         skills.skill_metadata(linked)
+
+
+@pytest.mark.parametrize("scope", ["portable", "claude"])
+@pytest.mark.parametrize("operation", ["apply", "uninstall"])
+def test_retargeted_skill_parent_is_never_mutated(
+    tmp_path: Path, scope: str, operation: str,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    skills.apply_skills(roots)
+    target = dict(skills._skill_targets(roots, "demo-skill"))[scope]
+    original = tmp_path / "original-skills"
+    foreign = tmp_path / "foreign-skills"
+    target.parent.rename(original)
+    shutil.copytree(original, foreign)
+    target.parent.symlink_to(foreign, target_is_directory=True)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_before = Path(roots.state_root, "global-state.json").read_bytes()
+    Path(roots.config_root, "skills/demo-skill/reference.txt").write_text("updated")
+
+    plan = (skills.skill_plan if operation == "apply"
+            else skills.skill_uninstall_plan)(roots)
+    item = next(item for item in plan["items"] if item["scope"] == scope)
+    assert item["action"] == "conflict"
+    with pytest.raises(substrate.GlobalError):
+        (skills.apply_skills if operation == "apply"
+         else skills.uninstall_skills)(roots)
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert Path(roots.state_root, "global-state.json").read_bytes() == state_before
 
 
 def test_import_is_local_new_only_and_exact(tmp_path: Path) -> None:

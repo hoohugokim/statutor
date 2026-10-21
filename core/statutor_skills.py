@@ -243,17 +243,21 @@ def skill_plan(
                     reason = None if adopt_identical else "identical unmanaged target; use --adopt-identical"
                 else:
                     action, reason = "conflict", "differing unmanaged target"
-            elif current.token != receipt["installed_token"]:
-                action, reason = "conflict", "managed target is missing or modified"
+            elif reason := substrate.managed_target_reason(target, receipt, current):
+                action = "conflict"
             elif current.digest == digest:
                 action = "noop"
             else:
                 action = "update"
             if current.kind == "tree":
                 target_digests.append(current.digest)
+            parent = (Path(str(receipt["target_real"])).parent
+                      if isinstance(receipt, dict)
+                      else target.parent.resolve(strict=False))
             items.append({
                 "name": name, "scope": scope, "source": str(source),
                 "source_digest": digest, "target": str(target),
+                "target_parent": str(parent),
                 "current_token": current.token, "action": action, "reason": reason,
             })
         if len(target_digests) == 2:
@@ -291,14 +295,15 @@ def skill_status(roots: substrate.ResolvedRoots) -> dict[str, object]:
 
 def _skill_receipt(
     name: str, scope: str, source: Path, target: Path,
-    source_digest: str, token: str, backup_id: str,
+    source_digest: str, token: str, backup_id: str, target_parent: str,
 ) -> dict[str, object]:
     return {
         "kind": "skill", "name": name, "target_scope": scope,
         "source_logical": str(source.absolute()),
         "source_real": str(source.resolve(strict=True)),
         "target_logical": str(target.absolute()),
-        "target_real": str(target.resolve(strict=True)),
+        "target_real": str(substrate.target_identity(
+            target, expected_parent=target_parent).physical_target),
         "source_digest": source_digest, "installed_token": token,
         "backup_id": backup_id, "ownership": "statutor",
     }
@@ -335,23 +340,33 @@ def apply_skills(
             for item in changes:
                 name, scope = str(item["name"]), str(item["scope"])
                 source, target = Path(str(item["source"])), Path(str(item["target"]))
+                previous = artifacts.get(f"skill-{name}-{scope}")
+                if isinstance(previous, dict):
+                    reason = substrate.managed_target_reason(target, previous)
+                    if reason:
+                        raise substrate.ConcurrentChange(reason)
+                parent = str(item["target_parent"])
                 backup_key = f"{operation_id}.{name}.{scope}"
                 manifest, _ = substrate.create_backup(
                     state_root, target, operation_id=operation_id,
-                    artifact_id=f"{name}-{scope}")
-                previous = artifacts.get(f"skill-{name}-{scope}")
+                    artifact_id=f"{name}-{scope}", expected_parent=parent)
                 if item["action"] == "adopt-identical":
-                    result = substrate.fingerprint(target)
+                    identity = substrate.target_identity(
+                        target, expected_parent=parent)
+                    result = substrate._require_expected(
+                        identity.physical_target, str(item["current_token"]))
+                    identity.require()
                 else:
                     result = substrate.atomic_replace_tree(
-                        target, source, expected=str(item["current_token"]))
+                        target, source, expected=str(item["current_token"]),
+                        expected_parent=parent)
                     installed.append((target, manifest, result.token))
                 initial_backup = (
                     str(previous["backup_id"]) if isinstance(previous, dict)
                     else backup_key)
                 artifacts[f"skill-{name}-{scope}"] = _skill_receipt(
                     name, scope, source, target, str(item["source_digest"]),
-                    result.token, initial_backup)
+                    result.token, initial_backup, parent)
                 backups[backup_key] = str(manifest.relative_to(state_root))
                 journal, _ = substrate.update_journal(
                     journal_path, journal, status="applying",
@@ -387,12 +402,15 @@ def skill_uninstall_plan(roots: substrate.ResolvedRoots) -> dict[str, object]:
         if not key.startswith("skill-"):
             continue
         assert isinstance(receipt, dict)
-        target = Path(str(receipt["target_logical"]))
+        targets = dict(_skill_targets(roots, str(receipt["name"])))
+        target = targets.get(str(receipt["target_scope"]))
+        if target is None:
+            raise substrate.SchemaError("unsupported skill receipt target scope")
         current = substrate.fingerprint(target)
         if str(receipt["name"]) in locked:
             action, reason = "conflict", "name is present in foreign lock"
-        elif current.token != receipt["installed_token"]:
-            action, reason = "conflict", "managed target is missing or modified"
+        elif reason := substrate.managed_target_reason(target, receipt, current):
+            action = "conflict"
         elif str(receipt["backup_id"]) not in backups:
             action, reason = "conflict", "initial backup is missing"
         else:
@@ -438,11 +456,12 @@ def uninstall_skills(roots: substrate.ResolvedRoots) -> dict[str, object]:
             key = str(item["artifact"])
             receipt = artifacts[key]
             assert isinstance(receipt, dict)
-            target = Path(str(receipt["target_logical"]))
+            target = Path(str(item["target"]))
             manifest = backups.get(str(receipt["backup_id"]))
             assert isinstance(manifest, str)
             candidates.append((
-                key, target, state_root / manifest, str(item["current_token"])))
+                key, target, receipt, state_root / manifest,
+                str(item["current_token"])))
         if not candidates:
             return {"schema_version": 1, "restored": []}
         operation_id = os.urandom(16).hex()
@@ -455,10 +474,14 @@ def uninstall_skills(roots: substrate.ResolvedRoots) -> dict[str, object]:
         rollback: list[tuple[Path, Path, str]] = []
         committed = False
         try:
-            for key, target, manifest, token in candidates:
+            for key, target, receipt, manifest, token in candidates:
+                reason = substrate.managed_target_reason(target, receipt)
+                if reason:
+                    raise substrate.ConcurrentChange(reason)
                 rollback_manifest, _ = substrate.create_backup(
                     state_root, target, operation_id=operation_id,
-                    artifact_id=f"rollback-{len(rollback)}")
+                    artifact_id=f"rollback-{len(rollback)}",
+                    expected_parent=Path(str(receipt["target_real"])).parent)
                 result = substrate.restore_backup(
                     manifest, target, expected_current=token)
                 rollback.append((target, rollback_manifest, result.token))

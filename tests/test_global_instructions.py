@@ -293,3 +293,20 @@ def test_instruction_parent_retargeted_after_plan_is_refused(
     with pytest.raises(substrate.GlobalError):
         lifecycle.apply_instructions(roots, hosts=["codex"])
     assert substrate.fingerprint(foreign).token == foreign_before
+
+
+def test_instruction_install_and_restore_support_a_stable_symlink_parent(
+    tmp_path: Path,
+) -> None:
+    roots = _roots(tmp_path)
+    lifecycle.global_init(roots)
+    target = lifecycle.instruction_target(roots, "codex")
+    real_parent = tmp_path / "real-codex"
+    real_parent.mkdir()
+    target.parent.parent.mkdir(parents=True)
+    target.parent.symlink_to(real_parent, target_is_directory=True)
+    lifecycle.apply_instructions(roots, hosts=["codex"])
+    assert (real_parent / target.name).is_file()
+    lifecycle.uninstall_instructions(roots, hosts=["codex"])
+    assert target.parent.is_symlink()
+    assert not (real_parent / target.name).exists()

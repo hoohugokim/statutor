@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-22 by full pytest (756 passed, 2 package-audit skips), independent runtime/Standards reviews, and Rust 1.75 conformance
+last_verified: 2026-10-22 by exact-index gate at ab454d5 (769 passed, zero skips), seven Rust tests, artifact audits, native probes, and independent reviews
 last_worker: codex
 last_machine: unknown
 handoff_id: b2bb593f0c7b485b814379cf546642cd
@@ -24,8 +24,8 @@ Release hardened Python/plugins 0.7.4, npm adapter 0.2.0, and crate 0.1.2
   Rust 1.75 release build, seven unit tests, and conformance pass.
 
 ## Next action
-Finish native probe integration, run the exact-index artifact gate, then
-publish the reviewed revision through GitHub, PyPI, npm, and crates.io.
+Push the reviewed release PR, verify its exact-revision checks, then publish
+through GitHub, PyPI, npm, and crates.io. Local artifact gate passed.
 npm login verified. Tracked runbook: docs/releasing.md.
 
 ## Gotchas

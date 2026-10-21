@@ -8,6 +8,8 @@ Cargo have independent versions. The hardening candidate uses Python/plugin
    affected tests, then obtain independent review of the final patch.
 2. Reconcile TASKS and the bounded HANDOFF. Keep existing task IDs and append
    decisions. Update README/pre-commit pins and all relevant package manifests.
+   Use the UTC verification date in HANDOFF so runners in earlier time zones
+   do not see a future date.
 3. Stage the candidate and run the full gate with Python `build`, `pytest`,
    and optional-test dependency `PyYAML`, Node 24, and Cargo available:
 

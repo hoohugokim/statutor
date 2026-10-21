@@ -1,7 +1,7 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-22 by exact-index gate at ab454d5 (769 passed, zero skips), seven Rust tests, artifact audits, native probes, and independent reviews
+last_verified: 2026-10-21 (UTC) by exact-index gate at ab454d5 (769 passed, zero skips), seven Rust tests, artifact audits, native probes, and independent reviews
 last_worker: codex
 last_machine: unknown
 handoff_id: b2bb593f0c7b485b814379cf546642cd

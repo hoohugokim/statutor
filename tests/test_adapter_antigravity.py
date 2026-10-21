@@ -442,7 +442,9 @@ def test_hooks_json_valid_schema():
     spec = data["statutor"]
     assert "PreToolUse" in spec
     assert "Stop" in spec
-    assert spec["PreToolUse"][0]["matcher"] == "run_command|write_to_file|replace_file_content"
+    assert set(spec["PreToolUse"][0]["matcher"].split("|")) == {
+        "run_command", "write_to_file", "replace_file_content", "multi_replace_file_content",
+    }
     assert spec["PreToolUse"][0]["hooks"][0]["type"] == "command"
     assert spec["Stop"][0]["type"] == "command"
 

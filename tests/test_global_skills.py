@@ -107,6 +107,53 @@ def test_retargeted_skill_parent_is_never_mutated(
     assert Path(roots.state_root, "global-state.json").read_bytes() == state_before
 
 
+def test_identical_adoption_refuses_parent_retarget_after_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    canonical = Path(roots.config_root, "skills/demo-skill")
+    target = Path(roots.portable_skills, "demo-skill")
+    substrate.atomic_replace_tree(target, canonical, expected=substrate.ABSENT)
+    original = tmp_path / "original-skills"
+    foreign = tmp_path / "foreign-skills"
+    shutil.copytree(target.parent, foreign)
+    foreign_before = substrate.fingerprint(foreign).token
+    state_path = Path(roots.state_root, "global-state.json")
+    state_before = state_path.read_bytes()
+    real_backup = substrate.create_backup
+
+    def retarget_after_backup(state_root, path, **kwargs):
+        result = real_backup(state_root, path, **kwargs)
+        if Path(path) == target:
+            target.parent.rename(original)
+            target.parent.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(substrate, "create_backup", retarget_after_backup)
+    with pytest.raises(substrate.GlobalError):
+        skills.apply_skills(roots, adopt_identical=True)
+    assert substrate.fingerprint(foreign).token == foreign_before
+    assert state_path.read_bytes() == state_before
+
+
+def test_skill_install_and_restore_support_a_stable_symlink_parent(
+    tmp_path: Path,
+) -> None:
+    roots = _roots(tmp_path)
+    skills.import_skill(roots, _skill(tmp_path / "incoming"))
+    parent = Path(roots.portable_skills)
+    real_parent = tmp_path / "real-skills"
+    real_parent.mkdir()
+    parent.parent.mkdir(parents=True)
+    parent.symlink_to(real_parent, target_is_directory=True)
+    skills.apply_skills(roots)
+    assert (real_parent / "demo-skill").is_dir()
+    skills.uninstall_skills(roots)
+    assert parent.is_symlink()
+    assert not (real_parent / "demo-skill").exists()
+
+
 def test_import_is_local_new_only_and_exact(tmp_path: Path) -> None:
     roots = _roots(tmp_path)
     source = _skill(tmp_path / "incoming")

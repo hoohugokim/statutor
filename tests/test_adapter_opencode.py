@@ -1,8 +1,7 @@
 """Contract and behavior checks for the OpenCode adapter (v1 `server` + v2 `setup`).
 
-The static assertions always run. The behavioral cases need a Node runtime
-with TypeScript type stripping (22.6+) and the `statutor` CLI on PATH, so they
-skip instead of failing on hosts that do not ship either.
+The behavioral cases use a source CLI shim and need Node with TypeScript
+type stripping (22.6+). The release gate requires that runtime.
 
 The v2 cases use the real 2.0.32 vocabulary (`shell`, `write`, `edit`, `patch`)
 and argument shapes (`path`, `patchText`), which differ from v1 (`bash`,
@@ -13,9 +12,11 @@ names; these tests fail if a future rename slips through again.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -81,12 +82,16 @@ process.stdout.write(JSON.stringify(results))
 def _node() -> str:
     executable = shutil.which("node")
     if executable is None:
+        if os.environ.get("STATUTOR_PACKAGE_AUDIT") == "1":
+            pytest.fail("release gate requires node for adapter behavior checks")
         pytest.skip("node is unavailable")
     raw = subprocess.run([executable, "--version"], capture_output=True, text=True, check=True).stdout
     match = re.match(r"v(\d+)\.(\d+)", raw)
     assert match is not None, raw
     major, minor = int(match.group(1)), int(match.group(2))
     if (major, minor) < (22, 6):
+        if os.environ.get("STATUTOR_PACKAGE_AUDIT") == "1":
+            pytest.fail(f"release gate requires Node 22.6+, got {raw.strip()}")
         pytest.skip(f"node {raw.strip()} cannot strip TypeScript types")
     return executable
 
@@ -101,6 +106,16 @@ def _ledger(tmp_path: Path) -> Path:
 
 def _run(tmp_path: Path, api: str, env: dict[str, str] | None = None) -> dict[str, str]:
     node = _node()
+    if env is None:
+        bindir = tmp_path / "candidate-bin"
+        bindir.mkdir()
+        shim = bindir / "statutor"
+        shim.write_text(
+            f"#!{sys.executable}\nimport sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'core')!r})\n"
+            "from statutor_core import main\nmain()\n", encoding="utf-8")
+        shim.chmod(0o755)
+        env = {**os.environ, "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}
     harness = tmp_path / "adapter_probe.mjs"
     harness.write_text(HARNESS, encoding="utf-8")
     completed = subprocess.run(
@@ -149,14 +164,25 @@ def test_adapter_fails_open_on_spawn_errors() -> None:
 
 @pytest.mark.parametrize("api", ["v2", "v1"])
 def test_guard_blocks_every_canonical_shape(tmp_path: Path, api: str) -> None:
-    if shutil.which("statutor") is None:
-        pytest.skip("statutor CLI is unavailable")
     result = _run(tmp_path, api)
     assert result["id"] == "statutor"
     for label in ("write", "edit", "patch", "shell"):
         assert result[label].startswith("blocked:"), (label, result[label])
     assert result["plain"] == "allowed"
     assert result["unguarded"] == "allowed"
+
+
+def test_adapter_probe_uses_candidate_instead_of_installed_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    foreign = tmp_path / "foreign-bin"
+    foreign.mkdir()
+    executable = foreign / "statutor"
+    executable.write_text(f"#!{sys.executable}\nraise SystemExit(0)\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(foreign) + os.pathsep + os.environ.get("PATH", ""))
+    result = _run(tmp_path, "v2")
+    assert result["write"].startswith("blocked:")
 
 
 @pytest.mark.parametrize("api", ["v2", "v1"])

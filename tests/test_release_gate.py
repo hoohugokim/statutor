@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -67,3 +69,37 @@ def test_release_tag_must_match_python_version() -> None:
     release_gate._check_tag("v0.4.0", "0.4.0")
     with pytest.raises(RuntimeError, match="v0.3.0 != package version v0.4.0"):
         release_gate._check_tag("v0.3.0", "0.4.0")
+
+
+def test_candidate_snapshot_keeps_policy_baseline_and_excludes_untracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(
+            ["git", "-c", "user.name=Release test", "-c", "user.email=test@statutor.invalid", *args],
+            cwd=repo, text=True)
+
+    git("init", "-q", "-b", "main")
+    (repo / ".statutor.yaml").write_text(
+        "governed:\n  - pattern: NOTES.md\n    policy: append_only\n")
+    (repo / "NOTES.md").write_text("original\n")
+    git("add", ".")
+    git("commit", "-qm", "baseline")
+    (repo / "NOTES.md").write_text("rewritten\n")
+    git("add", "NOTES.md")
+    (repo / "test_untracked.py").write_text("raise RuntimeError('untracked')\n")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    monkeypatch.setattr(release_gate, "ROOT", repo)
+    release_gate._candidate_tree(snapshot)
+    assert (snapshot / "NOTES.md").read_text() == "rewritten\n"
+    assert not (snapshot / "test_untracked.py").exists()
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "core/statutor_core.py"), "staged", str(snapshot)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "append-only" in result.stdout

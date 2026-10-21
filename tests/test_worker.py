@@ -346,6 +346,7 @@ def test_legacy_session_remains_readable_but_requires_new_begin_for_ingress(
     registry = state / "projects" / begun["project_id"] / "workers.json"
     legacy = json.loads(registry.read_text())
     legacy["sessions"][sid].pop("ledger_root", None)
+    legacy["worktrees"][begun["worktree_id"]].pop("completed_by_ledger", None)
     registry.write_text(json.dumps(legacy))
     before = registry.read_bytes()
     assert worker.worker_active(state, str(repo))["leases"][0]["session_id"] == sid
@@ -380,3 +381,50 @@ def test_compare_reads_nested_ledger_handoffs_from_git_refs(tmp_path: Path) -> N
     assert result["theirs"]["handoff_id"] == "hA"
     assert result["classification"] == "sibling"
     assert result["reconciliation_must_supersede"] == ["hA", "hB"]
+
+
+def test_independent_ledgers_in_one_worktree_complete_without_false_collision(
+        tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / ".statutor.yaml").write_text("bash_guard: true\n")
+    (nested / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: nested0\n")
+    (repo / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: outer0\n")
+    outer = worker.worker_begin(state, str(repo), harness="human")
+    inner = worker.worker_begin(state, str(nested), harness="human")
+    (repo / "HANDOFF.md").write_text(
+        "# HANDOFF\nhandoff_id: outer1\nsupersedes: outer0\n")
+    worker.worker_complete(state, str(repo), session_id=outer["session"]["session_id"])
+    (nested / "HANDOFF.md").write_text(
+        "# HANDOFF\nhandoff_id: nested1\nsupersedes: nested0\n")
+    done = worker.worker_complete(state, str(nested), session_id=inner["session"]["session_id"])
+    assert done["record"]["handoff_id"] == "nested1"
+    assert done["reconciled"] is None
+
+
+def test_nested_completion_does_not_hide_same_ledger_collision(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / ".statutor.yaml").write_text("bash_guard: true\n")
+    (nested / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: nested0\n")
+    (repo / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: outer0\n")
+    first = worker.worker_begin(state, str(repo), harness="human")
+    second = worker.worker_begin(state, str(repo), harness="human")
+    inner = worker.worker_begin(state, str(nested), harness="human")
+    (repo / "HANDOFF.md").write_text(
+        "# HANDOFF\nhandoff_id: outer1\nsupersedes: outer0\n")
+    worker.worker_complete(state, str(repo), session_id=first["session"]["session_id"])
+    (nested / "HANDOFF.md").write_text(
+        "# HANDOFF\nhandoff_id: nested1\nsupersedes: nested0\n")
+    worker.worker_complete(state, str(nested), session_id=inner["session"]["session_id"])
+    (repo / "HANDOFF.md").write_text(
+        "# HANDOFF\nhandoff_id: outer2\nsupersedes: outer0\n")
+    registry = state / "projects" / first["project_id"] / "workers.json"
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="current completed outer1"):
+        worker.worker_complete(state, str(repo), session_id=second["session"]["session_id"])
+    assert registry.read_bytes() == before

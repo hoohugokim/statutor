@@ -11,7 +11,7 @@
 //! on every scenario; divergence fails CI. The policy kernel stays
 //! canonical in Python.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -93,106 +93,368 @@ pub fn default_policy() -> Policy {
     }
 }
 
-fn parse_policy(text: &str) -> Result<Policy, ()> {
-    let docs = yaml_rust2::YamlLoader::load_from_str(text).map_err(|_| ())?;
-    let doc = docs.into_iter().next().ok_or(())?;
-    let root = doc.as_hash().ok_or(())?;
-    for key in root.keys() {
-        let key = key.as_str().ok_or(())?;
-        if !matches!(key, "bash_guard" | "governed") {
-            return Err(());
+#[derive(Debug)]
+enum PolicyValue {
+    Text(String),
+    Integer(String),
+    Boolean(bool),
+    Sections(Vec<String>),
+}
+
+fn python_whitespace(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
+}
+
+fn python_lines(mut text: &str) -> impl Iterator<Item = &str> {
+    std::iter::from_fn(move || {
+        if text.is_empty() {
+            return None;
+        }
+        if let Some((index, c)) = text.char_indices().find(|&(_, c)| {
+            matches!(
+                c,
+                '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}'
+                    ..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+            )
+        }) {
+            let line = &text[..index];
+            let mut next = index + c.len_utf8();
+            if c == '\r' && text[next..].starts_with('\n') {
+                next += 1;
+            }
+            text = &text[next..];
+            Some(line)
+        } else {
+            let line = text;
+            text = "";
+            Some(line)
+        }
+    })
+}
+
+fn decimal_integer(text: &str) -> Option<String> {
+    // Unicode 16.0 Nd blocks, generated from the Python 3.14 canonical baseline.
+    const STARTS: &[u32] = &[
+        0x30, 0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66,
+        0xde6, 0xe50, 0xed0, 0xf20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90,
+        0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0,
+        0xff10, 0x104a0, 0x10d30, 0x10d40, 0x11066, 0x110f0, 0x11136, 0x111d0, 0x112f0, 0x11450,
+        0x114d0, 0x11650, 0x116c0, 0x116d0, 0x116da, 0x11730, 0x118e0, 0x11950, 0x11bf0, 0x11c50,
+        0x11d50, 0x11da0, 0x11f50, 0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce,
+        0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140, 0x1e2f0, 0x1e4f0, 0x1e5f1, 0x1e950, 0x1fbf0,
+    ];
+    let (negative, digits) = if let Some(rest) = text.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, text.strip_prefix('+').unwrap_or(text))
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut normalized = String::new();
+    for c in digits.chars() {
+        let cp = c as u32;
+        let start = STARTS.iter().find(|&&base| cp >= base && cp < base + 10)?;
+        normalized.push(char::from_digit(cp - start, 10)?);
+    }
+    let value = normalized.trim_start_matches('0');
+    Some(if value.is_empty() {
+        "0".into()
+    } else if negative {
+        format!("-{value}")
+    } else {
+        value.into()
+    })
+}
+
+fn json_string(token: &str) -> Result<String, ()> {
+    let mut chars = token.chars();
+    if chars.next() != Some('"') {
+        return Err(());
+    }
+    let mut value = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                return if chars.next().is_none() {
+                    Ok(value)
+                } else {
+                    Err(())
+                }
+            }
+            '\\' => match chars.next().ok_or(())? {
+                '"' => value.push('"'),
+                '\\' => value.push('\\'),
+                '/' => value.push('/'),
+                'b' => value.push('\u{8}'),
+                'f' => value.push('\u{c}'),
+                'n' => value.push('\n'),
+                'r' => value.push('\r'),
+                't' => value.push('\t'),
+                'u' => {
+                    let hex = |chars: &mut std::str::Chars<'_>| -> Result<u32, ()> {
+                        let mut n = 0;
+                        for _ in 0..4 {
+                            n = n * 16 + chars.next().and_then(|c| c.to_digit(16)).ok_or(())?;
+                        }
+                        Ok(n)
+                    };
+                    let mut cp = hex(&mut chars)?;
+                    if (0xd800..=0xdbff).contains(&cp) {
+                        if chars.next() != Some('\\') || chars.next() != Some('u') {
+                            return Err(());
+                        }
+                        let low = hex(&mut chars)?;
+                        if !(0xdc00..=0xdfff).contains(&low) {
+                            return Err(());
+                        }
+                        cp = 0x10000 + (cp - 0xd800) * 0x400 + low - 0xdc00;
+                    }
+                    value.push(char::from_u32(cp).ok_or(())?);
+                }
+                _ => return Err(()),
+            },
+            c if c < '\u{20}' => return Err(()),
+            c => value.push(c),
         }
     }
-    let bash_guard = root
-        .get(&yaml_rust2::Yaml::from_str("bash_guard"))
-        .map(|value| value.as_bool().ok_or(()))
-        .transpose()?
-        .unwrap_or(true);
-    let governed_key = &yaml_rust2::Yaml::from_str("governed");
-    let governed = root.get(governed_key).ok_or(())?.as_vec().ok_or(())?;
+    Err(())
+}
 
-    let mut rules = Vec::new();
-    for item in governed {
-        let map = item.as_hash().ok_or(())?;
-        for key in map.keys() {
-            let key = key.as_str().ok_or(())?;
-            if !matches!(
-                key,
-                "pattern"
-                    | "policy"
-                    | "max_lines"
-                    | "hard_max_lines"
-                    | "soft_max_lines"
-                    | "stale_after_days"
-                    | "required_sections"
-            ) {
-                return Err(());
-            }
+fn policy_scalar(token: &str) -> Result<PolicyValue, ()> {
+    let token = token.trim_matches(python_whitespace);
+    if token.is_empty() {
+        return Err(());
+    }
+    if token.starts_with('"') {
+        return Ok(PolicyValue::Text(json_string(token)?));
+    }
+    if token.starts_with('\'') {
+        if token.len() < 2 || !token.ends_with('\'') {
+            return Err(());
         }
-        let get_str = |k: &str| -> Option<String> {
-            map.get(&yaml_rust2::Yaml::from_str(k))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        };
-        let pattern = get_str("pattern").ok_or(())?;
-        let policy = get_str("policy").ok_or(())?;
-        if pattern.is_empty()
-            || !matches!(
-                policy.as_str(),
-                "constitution" | "overwrite_bounded" | "append_only" | "state" | "frozen"
-            )
+        return Ok(PolicyValue::Text(
+            token[1..token.len() - 1].replace("''", "'"),
+        ));
+    }
+    if token.eq_ignore_ascii_case("true") {
+        return Ok(PolicyValue::Boolean(true));
+    }
+    if token.eq_ignore_ascii_case("false") {
+        return Ok(PolicyValue::Boolean(false));
+    }
+    if token == "[]" {
+        return Ok(PolicyValue::Sections(Vec::new()));
+    }
+    if let Some(number) = decimal_integer(token) {
+        return Ok(PolicyValue::Integer(number));
+    }
+    if "[{&*!|>@`".contains(token.chars().next().ok_or(())?)
+        || matches!(token, "null" | "Null" | "NULL" | "~")
+    {
+        return Err(());
+    }
+    Ok(PolicyValue::Text(token.into()))
+}
+
+fn strip_policy_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut previous = None;
+    for (i, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            previous = Some(c);
+            continue;
+        }
+        if quote == Some('"') && c == '\\' {
+            escaped = true;
+            previous = Some(c);
+            continue;
+        }
+        if matches!(c, '\'' | '"') {
+            if quote.is_none() {
+                quote = Some(c);
+            } else if quote == Some(c) {
+                quote = None;
+            }
+        } else if c == '#' && quote.is_none() && previous.map_or(true, python_whitespace) {
+            return line[..i].trim_end_matches(python_whitespace);
+        }
+        previous = Some(c);
+    }
+    line.trim_end_matches(python_whitespace)
+}
+
+fn policy_mapping(text: &str) -> Result<(&str, &str), ()> {
+    let (key, value) = text.split_once(':').ok_or(())?;
+    let key = key.trim_matches(python_whitespace);
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+        return Err(());
+    }
+    Ok((key, value.trim_matches(python_whitespace)))
+}
+
+fn parse_policy(text: &str) -> Result<Policy, ()> {
+    let mut top = HashMap::new();
+    let mut fields: Vec<HashMap<String, PolicyValue>> = Vec::new();
+    let mut current = None;
+    let mut sections = false;
+    for raw in python_lines(text) {
+        if raw
+            .chars()
+            .take_while(|&c| python_whitespace(c))
+            .any(|c| c == '\t')
         {
             return Err(());
         }
-        let int_of = |k: &str| -> Result<Option<i64>, ()> {
-            let Some(value) = map.get(&yaml_rust2::Yaml::from_str(k)) else {
-                return Ok(None);
-            };
-            let parsed = value
-                .as_i64()
-                .or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok()))
-                .ok_or(())?;
-            if parsed < 0 {
+        let line = strip_policy_comment(raw);
+        if line.trim_matches(python_whitespace).is_empty() {
+            continue;
+        }
+        let indent = line.bytes().take_while(|&c| c == b' ').count();
+        let body = &line[indent..];
+        if indent == 0 {
+            current = None;
+            sections = false;
+            let (key, token) = policy_mapping(body)?;
+            if !matches!(key, "bash_guard" | "governed") || top.contains_key(key) {
                 return Err(());
             }
-            Ok(Some(parsed))
+            let value = if key == "governed" && token.is_empty() {
+                PolicyValue::Sections(Vec::new())
+            } else {
+                policy_scalar(token)?
+            };
+            if !matches!(
+                (&value, key),
+                (PolicyValue::Boolean(_), "bash_guard") | (PolicyValue::Sections(_), "governed")
+            ) {
+                return Err(());
+            }
+            top.insert(key.to_string(), value);
+            continue;
+        }
+        if !top.contains_key("governed") {
+            return Err(());
+        }
+        let (key, token) = if indent == 2 && body.starts_with("- ") {
+            fields.push(HashMap::new());
+            current = Some(fields.len() - 1);
+            sections = false;
+            policy_mapping(&body[2..])?
+        } else if indent == 4 && current.is_some() {
+            sections = false;
+            policy_mapping(body)?
+        } else if indent == 6 && body.starts_with("- ") && sections {
+            let PolicyValue::Text(value) = policy_scalar(&body[2..])? else {
+                return Err(());
+            };
+            let Some(PolicyValue::Sections(items)) =
+                fields[current.ok_or(())?].get_mut("required_sections")
+            else {
+                return Err(());
+            };
+            items.push(value);
+            continue;
+        } else {
+            return Err(());
         };
-        // Validate doctor-only numeric fields even though the staged binary
-        // does not otherwise consume them.
-        let _ = int_of("soft_max_lines")?;
-        let _ = int_of("stale_after_days")?;
-        let required_sections = match map.get(&yaml_rust2::Yaml::from_str("required_sections")) {
+        if !matches!(
+            key,
+            "pattern"
+                | "policy"
+                | "max_lines"
+                | "hard_max_lines"
+                | "soft_max_lines"
+                | "stale_after_days"
+                | "required_sections"
+        ) {
+            return Err(());
+        }
+        let map = &mut fields[current.ok_or(())?];
+        if map.contains_key(key) {
+            return Err(());
+        }
+        let value = if key == "required_sections" {
+            sections = true;
+            if token.is_empty() {
+                PolicyValue::Sections(Vec::new())
+            } else {
+                let value = policy_scalar(token)?;
+                if !matches!(value, PolicyValue::Sections(_)) {
+                    return Err(());
+                }
+                value
+            }
+        } else {
+            policy_scalar(token)?
+        };
+        map.insert(key.to_string(), value);
+    }
+    if !top.contains_key("governed") {
+        return Err(());
+    }
+    let bash_guard = match top.get("bash_guard") {
+        Some(PolicyValue::Boolean(value)) => *value,
+        _ => true,
+    };
+    let mut governed = Vec::new();
+    for map in fields {
+        let text_of = |key| match map.get(key) {
+            Some(PolicyValue::Text(value)) if !value.is_empty() => Ok(value.clone()),
+            _ => Err(()),
+        };
+        let pattern = text_of("pattern")?;
+        let policy = text_of("policy")?;
+        if !matches!(
+            policy.as_str(),
+            "constitution" | "overwrite_bounded" | "append_only" | "state" | "frozen"
+        ) {
+            return Err(());
+        }
+        let integer_of = |key| -> Result<Option<i64>, ()> {
+            let number = match map.get(key) {
+                None => return Ok(None),
+                Some(PolicyValue::Integer(value)) => value.clone(),
+                Some(PolicyValue::Text(value)) => decimal_integer(value).ok_or(())?,
+                _ => return Err(()),
+            };
+            if number.starts_with('-') {
+                return Err(());
+            }
+            // A Git blob cannot contain more than i64::MAX physical lines.
+            Ok(Some(number.bytes().fold(0_i64, |n, digit| {
+                n.saturating_mul(10).saturating_add((digit - b'0') as i64)
+            })))
+        };
+        integer_of("soft_max_lines")?;
+        integer_of("stale_after_days")?;
+        let required_sections = match map.get("required_sections") {
             None => Vec::new(),
-            Some(value) => value
-                .as_vec()
-                .ok_or(())?
-                .iter()
-                .map(|item| {
-                    item.as_str()
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string)
-                        .ok_or(())
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+            Some(PolicyValue::Sections(values)) if values.iter().all(|s| !s.is_empty()) => {
+                values.clone()
+            }
+            _ => return Err(()),
         };
-        rules.push(Rule {
+        governed.push(Rule {
             pattern,
             policy,
-            max_lines: int_of("max_lines")?,
-            hard_max_lines: int_of("hard_max_lines")?,
+            max_lines: integer_of("max_lines")?,
+            hard_max_lines: integer_of("hard_max_lines")?,
             required_sections,
         });
     }
     Ok(Policy {
         bash_guard,
-        governed: rules,
+        governed,
     })
 }
 
 /// First rule whose pattern matches the rel path or its basename —
 /// statutor_core._match_rule semantics, including backslash normalization.
 pub fn match_rule<'a>(rel_path: &str, policy: &'a Policy) -> Option<&'a Rule> {
-    let rel = rel_path.replace('\\', "/");
+    let rel = rel_path.replace(std::path::MAIN_SEPARATOR, "/");
     let base = rel.rsplit('/').next().unwrap_or("");
     policy
         .governed
@@ -213,7 +475,7 @@ fn glob_match(p: &[char], n: &[char]) -> bool {
     let (mut pi, mut ni) = (0usize, 0usize);
     let (mut star_p, mut star_n) = (None::<usize>, 0usize);
     while ni < n.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+        if pi < p.len() && (p[pi] == '?' || (!matches!(p[pi], '*' | '[') && p[pi] == n[ni])) {
             pi += 1;
             ni += 1;
         } else if pi < p.len() && p[pi] == '*' {
@@ -277,34 +539,51 @@ enum ClassResult {
 }
 
 fn class_match(p: &[char], open: usize, c: char) -> ClassResult {
-    let mut i = open + 1;
-    let negated = i < p.len() && (p[i] == '!' || p[i] == '^');
-    if negated {
-        i += 1;
+    let start = open + 1;
+    let negated = p.get(start) == Some(&'!');
+    let mut end = start + usize::from(negated);
+    if p.get(end) == Some(&']') {
+        end += 1;
     }
-    let start = i;
-    let mut hit = false;
-    loop {
-        if i >= p.len() {
-            return ClassResult::Unterminated;
-        }
-        if p[i] == ']' && i > start {
-            break;
-        }
-        if i + 2 < p.len() && p[i + 1] == '-' && p[i + 2] != ']' {
-            if c >= p[i] && c <= p[i + 2] {
-                hit = true;
-            }
-            i += 3;
+    while end < p.len() && p[end] != ']' {
+        end += 1;
+    }
+    if end == p.len() {
+        return ClassResult::Unterminated;
+    }
+    let mut chunks: Vec<Vec<char>> = Vec::new();
+    let mut left = start;
+    let mut scan = start + if negated { 2 } else { 1 };
+    while scan < end {
+        if p[scan] == '-' {
+            chunks.push(p[left..scan].to_vec());
+            left = scan + 1;
+            scan += 3;
         } else {
-            if p[i] == c {
-                hit = true;
-            }
-            i += 1;
+            scan += 1;
         }
     }
+    if left < end {
+        chunks.push(p[left..end].to_vec());
+    } else if let Some(last) = chunks.last_mut() {
+        last.push('-');
+    }
+    for index in (1..chunks.len()).rev() {
+        if chunks[index - 1].last() > chunks[index].first() {
+            let tail = chunks.remove(index);
+            chunks[index - 1].pop();
+            chunks[index - 1].extend_from_slice(&tail[1..]);
+        }
+    }
+    let negated = chunks.first().and_then(|part| part.first()) == Some(&'!');
+    if negated {
+        chunks[0].remove(0);
+    }
+    let hit = chunks.iter().any(|part| part.contains(&c)) || chunks.windows(2).any(|parts| {
+        matches!((parts[0].last(), parts[1].first()), (Some(low), Some(high)) if low <= &c && &c <= high)
+    });
     if hit != negated {
-        ClassResult::Hit(i + 1)
+        ClassResult::Hit(end + 1)
     } else {
         ClassResult::Miss
     }
@@ -364,7 +643,14 @@ fn head_oid(cwd: &Path) -> Result<Option<String>, String> {
     )
 }
 
-fn head_entry(cwd: &Path, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+#[derive(Debug, PartialEq)]
+struct GitEntry {
+    oid: String,
+    blob: Vec<u8>,
+    mode: String,
+}
+
+fn head_entry(cwd: &Path, path: &str) -> Result<Option<GitEntry>, String> {
     if head_oid(cwd)?.is_none() {
         return Ok(None);
     }
@@ -390,10 +676,14 @@ fn head_entry(cwd: &Path, path: &str) -> Result<Option<(String, Vec<u8>)>, Strin
     }
     let oid = String::from_utf8_lossy(fields[2]).to_string();
     let blob = git(cwd, &["show", &format!("HEAD:{path}")])?;
-    Ok(Some((oid, blob)))
+    Ok(Some(GitEntry {
+        oid,
+        blob,
+        mode: String::from_utf8_lossy(fields[0]).into_owned(),
+    }))
 }
 
-fn index_entry(cwd: &Path, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+fn index_entry(cwd: &Path, path: &str) -> Result<Option<GitEntry>, String> {
     let listing = git(cwd, &["ls-files", "--stage", "-z", "--", path])?;
     if listing.is_empty() {
         return Ok(None);
@@ -416,7 +706,11 @@ fn index_entry(cwd: &Path, path: &str) -> Result<Option<(String, Vec<u8>)>, Stri
     }
     let oid = String::from_utf8_lossy(fields[1]).to_string();
     let blob = git(cwd, &["show", &format!(":{path}")])?;
-    Ok(Some((oid, blob)))
+    Ok(Some(GitEntry {
+        oid,
+        blob,
+        mode: String::from_utf8_lossy(fields[0]).into_owned(),
+    }))
 }
 
 #[derive(Debug)]
@@ -425,6 +719,8 @@ struct PolicySnapshots {
     candidate: Policy,
     baseline_policy_oid: Option<String>,
     candidate_policy_oid: Option<String>,
+    baseline_policy_mode: Option<String>,
+    candidate_policy_mode: Option<String>,
 }
 
 fn policy_snapshots(cwd: &Path) -> Result<PolicySnapshots, String> {
@@ -432,20 +728,27 @@ fn policy_snapshots(cwd: &Path) -> Result<PolicySnapshots, String> {
     let candidate_entry = index_entry(cwd, ".statutor.yaml")?;
     let baseline = match &baseline_entry {
         None => default_policy(),
-        Some((_, blob)) => parse_policy(&String::from_utf8_lossy(blob)).map_err(|_| {
-            "HEAD:.statutor.yaml: invalid or unsupported Statutor policy".to_string()
-        })?,
+        Some(entry) => std::str::from_utf8(&entry.blob)
+            .map_err(|_| ())
+            .and_then(parse_policy)
+            .map_err(|_| {
+                "HEAD:.statutor.yaml: invalid or unsupported Statutor policy".to_string()
+            })?,
     };
     let candidate = match &candidate_entry {
         None => default_policy(),
-        Some((_, blob)) => parse_policy(&String::from_utf8_lossy(blob))
+        Some(entry) => std::str::from_utf8(&entry.blob)
+            .map_err(|_| ())
+            .and_then(parse_policy)
             .map_err(|_| ":.statutor.yaml: invalid or unsupported Statutor policy".to_string())?,
     };
     Ok(PolicySnapshots {
         baseline,
         candidate,
-        baseline_policy_oid: baseline_entry.map(|entry| entry.0),
-        candidate_policy_oid: candidate_entry.map(|entry| entry.0),
+        baseline_policy_mode: baseline_entry.as_ref().map(|entry| entry.mode.clone()),
+        candidate_policy_mode: candidate_entry.as_ref().map(|entry| entry.mode.clone()),
+        baseline_policy_oid: baseline_entry.map(|entry| entry.oid),
+        candidate_policy_oid: candidate_entry.map(|entry| entry.oid),
     })
 }
 
@@ -558,17 +861,19 @@ fn reserved_changes(cwd: &Path, snapshots: &PolicySnapshots) -> Result<Vec<Strin
         return Ok(Vec::new());
     }
     let mut reserved = Vec::new();
-    if snapshots.baseline_policy_oid != snapshots.candidate_policy_oid {
+    if snapshots.baseline_policy_oid != snapshots.candidate_policy_oid
+        || snapshots.baseline_policy_mode != snapshots.candidate_policy_mode
+    {
         reserved.push(".statutor.yaml".to_string());
     }
-    let baseline = head_entry(cwd, "CLAUDE.md")?.map(|entry| entry.1);
-    let candidate = index_entry(cwd, "CLAUDE.md")?.map(|entry| entry.1);
+    let baseline = head_entry(cwd, "CLAUDE.md")?;
+    let candidate = index_entry(cwd, "CLAUDE.md")?;
     let baseline_exact = baseline
-        .as_deref()
-        .is_some_and(|blob| EXACT_CLAUDE_BRIDGES.contains(&blob));
+        .as_ref()
+        .is_some_and(|entry| EXACT_CLAUDE_BRIDGES.contains(&entry.blob.as_slice()));
     let candidate_exact = candidate
-        .as_deref()
-        .is_some_and(|blob| EXACT_CLAUDE_BRIDGES.contains(&blob));
+        .as_ref()
+        .is_some_and(|entry| EXACT_CLAUDE_BRIDGES.contains(&entry.blob.as_slice()));
     if (baseline_exact && baseline != candidate) || (!baseline_exact && candidate_exact) {
         reserved.push("CLAUDE.md".to_string());
     }
@@ -710,9 +1015,10 @@ fn line_count(blob: &str) -> i64 {
     }
 }
 
-fn state_tasks(content: &str, path: &str) -> Result<HashMap<String, u64>, String> {
-    let mut tasks = HashMap::new();
-    for (index, line) in content.lines().enumerate() {
+fn state_tasks(content: &str, path: &str) -> Result<Vec<(String, String)>, String> {
+    let mut tasks = Vec::new();
+    let mut identities = HashSet::new();
+    for (index, line) in python_lines(content).enumerate() {
         if !line.starts_with("- [") {
             continue;
         }
@@ -722,15 +1028,16 @@ fn state_tasks(content: &str, path: &str) -> Result<HashMap<String, u64>, String
             && bytes[4] == b']'
             && bytes[5] == b' ';
         let parsed = valid_prefix.then(|| &line[6..]).and_then(|rest| {
-            let (task_id, detail) = rest.split_once(' ')?;
+            let split = rest.find(python_whitespace)?;
+            let task_id = &rest[..split];
+            let mut detail = rest[split..].chars();
+            detail.next()?;
+            detail.next()?;
             let digits = task_id.strip_prefix("T-")?;
-            if digits.len() < 4
-                || !digits.chars().all(|ch| ch.is_ascii_digit())
-                || detail.is_empty()
-            {
+            if digits.chars().count() < 4 || digits.starts_with(['+', '-']) {
                 return None;
             }
-            Some((task_id.to_string(), digits.parse::<u64>().ok()?))
+            Some((task_id.to_string(), decimal_integer(digits)?))
         });
         let Some((task_id, number)) = parsed else {
             return Err(format!(
@@ -739,9 +1046,10 @@ fn state_tasks(content: &str, path: &str) -> Result<HashMap<String, u64>, String
                 index + 1
             ));
         };
-        if tasks.insert(task_id.clone(), number).is_some() {
+        if !identities.insert(task_id.clone()) {
             return Err(format!("{path}: duplicate state task ID {task_id}."));
         }
+        tasks.push((task_id, number));
     }
     Ok(tasks)
 }
@@ -758,10 +1066,12 @@ fn state_reason(path: &str, candidate: &str, baseline: Option<&str>) -> Option<S
         Ok(tasks) => tasks,
         Err(reason) => return Some(reason),
     };
+    let baseline_ids: HashSet<&str> = baseline_tasks.iter().map(|(id, _)| id.as_str()).collect();
+    let candidate_ids: HashSet<&str> = candidate_tasks.iter().map(|(id, _)| id.as_str()).collect();
     let mut missing: Vec<String> = baseline_tasks
-        .keys()
-        .filter(|task_id| !candidate_tasks.contains_key(*task_id))
-        .cloned()
+        .iter()
+        .filter(|(task_id, _)| !candidate_ids.contains(task_id.as_str()))
+        .map(|(task_id, _)| task_id.clone())
         .collect();
     missing.sort();
     if !missing.is_empty() {
@@ -771,12 +1081,19 @@ Keep completed tasks in place.",
             py_list(&missing)
         ));
     }
-    if let Some(maximum) = baseline_tasks.values().max() {
+    let number_cmp = |a: &str, b: &str| a.len().cmp(&b.len()).then_with(|| a.cmp(b));
+    if let Some((_, maximum)) = baseline_tasks
+        .iter()
+        .max_by(|(_, a), (_, b)| number_cmp(a, b))
+    {
         for (task_id, number) in &candidate_tasks {
-            if !baseline_tasks.contains_key(task_id) && number <= maximum {
+            if !baseline_ids.contains(task_id.as_str())
+                && number_cmp(number, maximum) != std::cmp::Ordering::Greater
+            {
+                let maximum = format!("{:0>4}", maximum);
                 return Some(format!(
                     "{path}: new task ID {task_id} must be greater than existing \
-maximum T-{maximum:04}."
+maximum T-{maximum}."
                 ));
             }
         }
@@ -934,6 +1251,11 @@ pub fn run_staged(cwd: &Path) -> (i32, String) {
     let violations = match (|| -> Result<Vec<String>, String> {
         // Validate repository/index before resolving the two policy snapshots.
         let _ = staged_changes(cwd)?;
+        let raw_root = git(cwd, &["rev-parse", "--show-toplevel"])?;
+        let root = PathBuf::from(
+            String::from_utf8_lossy(raw_root.strip_suffix(b"\n").unwrap_or(&raw_root)).into_owned(),
+        );
+        let cwd = root.as_path();
         let snapshots = policy_snapshots(cwd)?;
         let reserved = reserved_changes(cwd, &snapshots)?;
         let mut violations = Vec::new();
@@ -998,6 +1320,10 @@ mod tests {
         // unterminated class: python emits the '[' as a literal char
         assert!(fnmatch("[abc", "[abc"));
         assert!(!fnmatch("[abc", "x[abc"));
+        assert!(fnmatch("[^a]", "a"));
+        assert!(fnmatch("[!a]", "["));
+        assert!(fnmatch("*?", "*"));
+        assert!(fnmatch("[b-a!]", "a"));
     }
 
     #[test]
@@ -1036,8 +1362,8 @@ mod tests {
         );
         assert!(match_rule("src/main.rs", &p).is_none());
         assert_eq!(
-            match_rule("plans\\archive\\win.md", &p).unwrap().policy,
-            "frozen"
+            match_rule("plans\\archive\\win.md", &p).is_some(),
+            cfg!(windows)
         );
     }
 

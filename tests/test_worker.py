@@ -356,3 +356,27 @@ def test_legacy_session_remains_readable_but_requires_new_begin_for_ingress(
         else:
             worker.worker_complete(state, str(repo), session_id=sid)
     assert registry.read_bytes() == before
+
+
+def test_compare_reads_nested_ledger_handoffs_from_git_refs(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = _repo(tmp_path, "repo")
+    (repo / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: outer\n")
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / ".statutor.yaml").write_text("bash_guard: true\n")
+    (nested / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: h0\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "nested ledger")
+    _git(repo, "checkout", "-qb", "sibling")
+    (nested / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: hA\nsupersedes: h0\n")
+    _git(repo, "commit", "-qam", "sibling nested handoff")
+    _git(repo, "checkout", "-q", "-")
+    (nested / "HANDOFF.md").write_text("# HANDOFF\nhandoff_id: hB\nsupersedes: h0\n")
+    _git(repo, "commit", "-qam", "ours nested handoff")
+    result = worker.worker_compare(state, str(nested), ref="sibling")
+    assert result["base"]["handoff_id"] == "h0"
+    assert result["ours"]["handoff_id"] == "hB"
+    assert result["theirs"]["handoff_id"] == "hA"
+    assert result["classification"] == "sibling"
+    assert result["reconciliation_must_supersede"] == ["hA", "hB"]

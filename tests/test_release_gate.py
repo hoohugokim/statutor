@@ -20,6 +20,7 @@ def test_release_versions_are_explicit_and_compatible() -> None:
     assert release_gate.versions(ROOT) == {
         "python": "0.7.3",
         "plugin": "0.7.3",
+        "antigravity": "0.7.3",
         "npm": "0.2.0",
         "cargo": "0.1.1",
     }
@@ -29,6 +30,7 @@ def test_python_and_plugin_versions_must_match(tmp_path: Path) -> None:
     for relative in (
         "pyproject.toml",
         ".claude-plugin/plugin.json",
+        "adapters/antigravity/plugin.json",
         "adapters/opencode/package.json",
         "crates/statutor/Cargo.toml",
         "crates/statutor/Cargo.lock",
@@ -41,6 +43,23 @@ def test_python_and_plugin_versions_must_match(tmp_path: Path) -> None:
     data["version"] = "9.9.9"
     plugin.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(RuntimeError, match="Python 0.7.3 != Claude plugin 9.9.9"):
+        release_gate.versions(tmp_path)
+
+
+def test_antigravity_version_must_match_python(tmp_path: Path) -> None:
+    for relative in (
+        "pyproject.toml", ".claude-plugin/plugin.json",
+        "adapters/antigravity/plugin.json", "adapters/opencode/package.json",
+        "crates/statutor/Cargo.toml", "crates/statutor/Cargo.lock",
+    ):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / relative).read_bytes())
+    plugin = tmp_path / "adapters/antigravity/plugin.json"
+    data = json.loads(plugin.read_text())
+    data["version"] = "9.9.9"
+    plugin.write_text(json.dumps(data))
+    with pytest.raises(RuntimeError, match="Antigravity"):
         release_gate.versions(tmp_path)
 
 

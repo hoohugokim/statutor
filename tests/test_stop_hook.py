@@ -29,6 +29,18 @@ def run_stop_hook(input_str: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
+@pytest.mark.parametrize("event", [
+    {"executionNum": "2", "workspacePaths": []},
+    {"executionNum": None, "workspacePaths": []},
+    {"workspacePaths": 3},
+    {"cwd": {"invalid": "path"}},
+])
+def test_malformed_event_metadata_fails_open(event: dict) -> None:
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 def _scaffold(root: Path) -> None:
     statutor_core.run_init(str(root))
 

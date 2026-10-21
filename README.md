@@ -120,7 +120,7 @@ HANDOFF lineage in Git history, which lives as long as the repository does.
     # .pre-commit-config.yaml
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.7.3
+        rev: v0.7.4
         hooks: [{id: statutor}]
 
 `init` never mandates a layout (D-0024). It selects a profile — `--type NAME`,

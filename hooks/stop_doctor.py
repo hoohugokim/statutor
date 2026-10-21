@@ -74,7 +74,7 @@ def _find_ledger_root(start: str) -> str | None:
         current = parent
 
 
-def main() -> int:
+def _run() -> int:
     try:
         event = json.load(sys.stdin)
         if not isinstance(event, dict):
@@ -150,6 +150,13 @@ def main() -> int:
             "systemMessage": f"statutor-doctor: {len(findings)} issue(s) found — see transcript.",
         }))
     return 0
+
+
+def main() -> int:
+    try:
+        return _run()
+    except Exception:
+        return 0
 
 
 if __name__ == "__main__":

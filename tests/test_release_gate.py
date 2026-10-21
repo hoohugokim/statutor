@@ -114,7 +114,8 @@ def test_source_gate_uses_original_exact_tree_authorization(
     repo.mkdir()
     scenarios.s52_exact_tree_receipt_authorizes_policy_change(repo)
     policy = repo / ".statutor.yaml"
-    policy.write_bytes(policy.read_bytes().rstrip() + b"\n")
+    policy.write_bytes(policy.read_bytes().rstrip().replace(
+        b"hard_max_lines: 200", b"hard_max_lines: 199") + b"\n")
     subprocess.run(["git", "add", ".statutor.yaml"], cwd=repo, check=True)
     tree = subprocess.check_output(["git", "write-tree"], cwd=repo, text=True).strip()
     subprocess.run([

@@ -35,7 +35,7 @@ jobs:
       - name: Install release-gate dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build pytest
+          python -m pip install build pytest PyYAML
 
       - name: Prove tag and build verified artifacts
         run: python scripts/release_gate.py --tag "$GITHUB_REF_NAME" --dist-dir dist

@@ -1,6 +1,6 @@
 {
   "name": "statutor",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Typed project-ledger framework: four planes, single-writer files, hook-enforced mutation policies. Kernel + adapters for Claude Code, Grok Build, OpenCode, Codex, git, and custom harnesses.",
   "author": {
     "name": "Hoo"

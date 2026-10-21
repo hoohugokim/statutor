@@ -6,7 +6,7 @@
 the first release with object entrypoints). Both register the same guard on
 tool execution and shell out to the Python kernel CLI.
 
-1. `pipx install statutor` — the adapter shells out to the kernel; without the
+1. `pipx install 'statutor>=0.7.4'` — the adapter shells out to the kernel; without the
    CLI on `PATH` the plugin is a no-op. From a source checkout, the developer
    equivalent is `python -m pip install -e .` at the repository root.
    The adapter calls `statutor check --if-ledger`: it stays silent unless the

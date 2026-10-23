@@ -52,8 +52,8 @@ run, and a clean ledger stay quiet.
 | `beforeMCPExecution` | mapped tool, else bash if `command` | `tool_input` JSON string |
 
 `workspace_roots[0]` is the ledger search root when `cwd` is absent.
-An empty workspace list is allowed without policy checks. Stop stays quiet
-without a ledger workspace.
+When `cwd` is absent, an empty workspace list is allowed without policy
+checks. Stop stays quiet without a ledger workspace.
 
 ## Worker provenance
 

@@ -1,38 +1,34 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-21 (UTC) by all PR CI, 15 focused checks, independent editorial review, public GitHub rendering/file hashes, and desktop/narrow layout measurements
-last_worker: codex
+last_verified: 2026-10-22 (UTC) by pytest -q (785 passed, 5 skipped), statutor-doctor ., statutor staged .
+last_worker: cursor
 last_machine: unknown
-handoff_id: b41b8ad341034c5c85c3756a1bb00974
-supersedes: 57e014efb00e443187d60ce57339a5a0
+handoff_id: c7d36125f7fd3765e236d3a4208f58d4
+supersedes: b41b8ad341034c5c85c3756a1bb00974
 
 ## Goal
-Completed the README redesign approved by the human (T-0055).
+Close the 0.7.4 audit holes and add first-class Cursor support (D-0030).
 
 ## Last verified state
-- README is 144 lines, with a compact masthead, badges, navigation, example,
-  quickstart, agent chooser, Git setup, and visible coverage limits.
-- Four linked guides preserve policy/trust, architecture/API, optional global
-  instructions/skills, and worker provenance. Repository links resolve.
-- Antigravity setup now names a real checkout location, registers batch edits,
-  and describes fail-open behavior and the local Git hook's bypass honestly.
-- GitHub Markdown rendering preserves all navigation targets and four images.
-  Browser DOM layout has no article overflow at 1200 px and 390 px widths.
-- Independent editorial review PASS; 15 focused checks pass, including real
-  npm/Cargo payload audits. Runtime code, versions, and policy are unchanged.
-- Hardened release remains Python/plugins 0.7.4, npm 0.2.0, and crate 0.1.2.
-  PR #2/tag publication and public package verification remain complete.
-- PR #3 merged as d0a3bd2; public README, guides, logo, badges, and navigation verified.
+- Kernel: Antigravity relative TargetFile uses workspace CWD; truncated
+  apply_patch denies; hook reports invalid HEAD policy; MultiEdit/
+  NotebookEdit deny-unproved; matcher includes run_terminal_cmd.
+- Stop/doctor/worker honor overwrite_bounded basename and empty-workspace
+  silence. Rust missing optional OID key is None (s61).
+- Cursor adapter: hook_event_name map, permission JSON fail-open,
+  adapters/cursor/, dogfood .cursor/hooks.json, harness id cursor.
+- Python/plugins 0.7.5, npm 0.2.0, crate 0.1.3. Publication is human.
 
 ## Next action
-No documentation work remains. Select the next milestone with the human.
+Human: review, then tag/publish v0.7.5 and crate 0.1.3. npm stays 0.2.0.
 
 ## Gotchas
-- CLI installation and project initialization do not register agent hooks.
-- Hooks fail open; staged checks fail closed. Git hooks allow --no-verify.
-- Begin fresh legacy worker sessions after upgrading; restart Claude for its
-  already-updated 0.7.4 plugin. Global migration remains a separate opt-in.
+- Cursor permission hooks fail-closed on exit 0 plus invalid JSON; the
+  kernel always emits a permission object on a detected Cursor event.
+- Hooks fail open; staged fails closed. Git hooks allow --no-verify.
+- Do not reopen D-0028 empty-old_string Claude Edit, D-0015 bootstrap
+  receipts, TASKS pruning, or research-note D-number relabel.
 
 ## Do not touch
 Embedded templates/init profiles; frozen archive; DECISIONS.md header;

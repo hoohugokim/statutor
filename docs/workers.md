@@ -27,9 +27,10 @@ statutor worker record --harness codex --event attempt --session SESSION_ID
 ```
 
 Use `statutor worker capabilities --json` to inspect declared evidence and
-verification baselines for each agent. Automatic agent integrations cannot
-record `--event mutation`; only a human or a custom integration with actual
-post-success evidence may do so. An `unknown` agent proves activity only.
+verification baselines for each agent. Automatic agent integrations
+(`claude`, `codex`, `opencode`, `antigravity`, `gemini`, `grok`, `cursor`)
+cannot record `--event mutation`; only a human or a custom integration with
+actual post-success evidence may do so. An `unknown` agent proves activity only.
 Roles and origin agents stay `unknown` unless explicitly proved.
 
 ## Complete the handoff

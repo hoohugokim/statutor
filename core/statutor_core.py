@@ -53,7 +53,7 @@ import subprocess
 import sys
 from typing import NamedTuple
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 
 # --------------------------------------------------------------------------
 # policy
@@ -352,6 +352,19 @@ def load_worktree_policy(cwd: str) -> dict:
         return parse_policy(stream.read(), ".statutor.yaml")
 
 
+def overwrite_bounded_filename(root: str, fallback: str = "HANDOFF.md") -> str:
+    """Basename of the overwrite_bounded state file, or `fallback`."""
+    try:
+        for rule in load_worktree_policy(root).get("governed", []):
+            pattern = rule.get("pattern", "")
+            if (rule.get("policy") == "overwrite_bounded" and pattern
+                    and "*" not in pattern and "/" not in pattern):
+                return pattern
+    except Exception:
+        pass
+    return fallback
+
+
 def find_ledger_root(start: str) -> str | None:
     """Nearest ancestor carrying Statutor's explicit ledger marker."""
     current = os.path.abspath(start)
@@ -382,7 +395,10 @@ _SHELL_ALIASES = frozenset({
 # Edits whose body is not Claude's Edit shape. An empty old_string on these
 # names cannot fall through: that path allows a governed edit the kernel
 # never reconstructed. Claude's own "edit" name keeps the historical behavior.
-_PROVED_EDIT_ALIASES = frozenset({"search_replace", "strreplace", "hashline_edit"})
+_PROVED_EDIT_ALIASES = frozenset({
+    "search_replace", "strreplace", "hashline_edit",
+    "multiedit", "notebookedit",
+})
 
 
 def _norm(payload: dict, *, copy_path: bool = False) -> dict:
@@ -420,7 +436,10 @@ def _canonicalize(tool: str, payload: dict) -> tuple[str, dict, str]:
         canonical = "write"
     elif original in ("replace_file_content", "search_replace", "strreplace"):
         canonical = "edit"
-    copy_path = canonical in ("write", "edit") or original == "hashline_edit"
+    copy_path = (
+        canonical in ("write", "edit")
+        or original in ("hashline_edit", "multiedit", "notebookedit", "delete")
+    )
     normalized = _norm(payload, copy_path=copy_path)
     if original == "hashline_edit" and normalized.get("old_string"):
         canonical = "edit"
@@ -579,6 +598,12 @@ def validate(
             return (f"{rel} edit cannot be proved safe: {original} carried no "
                     "old_string. Retry with the existing text in old_string, "
                     "or use write with the full file.")
+        return None
+    if original == "delete":
+        rel = _governed_rel(payload, cwd, policy, root)
+        if rel is not None:
+            return (f"{rel} is governed: delete is denied. Records are "
+                    "superseded, never removed.")
         return None
 
     if tool == "bash":
@@ -979,9 +1004,11 @@ def _truncation_reason(
 ) -> str | None:
     """Deny when a cut body would hide a governed mutation or a shell write."""
     canonical, normalized, _original = _canonicalize(tool, payload)
-    if canonical == "bash":
+    if canonical in ("bash", "apply_patch"):
         return ("tool input was truncated; a shell command inside a ledger "
-                "cannot be proved safe.")
+                "cannot be proved safe." if canonical == "bash" else
+                "tool input was truncated; an apply_patch envelope inside a "
+                "ledger cannot be proved safe.")
     if canonical not in ("write", "edit", "hashline_edit"):
         return None
     rel = _governed_rel(normalized, cwd, policy, root)
@@ -998,7 +1025,10 @@ def _automatic_reason(
     root = find_ledger_root(cwd)
     if root is None:
         return None
-    policy = load_policy(root)
+    try:
+        policy = load_policy(root)
+    except _PolicyFailure as exc:
+        return f"committed policy invalid: {exc}"
     if truncated:
         reason = _truncation_reason(tool, payload, cwd, root, policy)
     else:
@@ -1046,16 +1076,7 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
         statutor_doctor.check(project_dir)
         findings = [f"WARN  {w}" for w in statutor_doctor.warnings] + [f"ERROR {e}" for e in statutor_doctor.errors]
 
-        state_filename = "HANDOFF.md"
-        try:
-            for rule in load_worktree_policy(project_dir).get("governed", []):
-                pattern = rule.get("pattern", "")
-                if (rule.get("policy") == "overwrite_bounded" and pattern
-                        and "*" not in pattern and "/" not in pattern):
-                    state_filename = pattern
-                    break
-        except Exception:
-            pass
+        state_filename = overwrite_bounded_filename(project_dir)
 
         sentinel_prefix = f"WARN  {state_filename} last verified"
         handoff_path = os.path.join(project_dir, state_filename)
@@ -1095,6 +1116,83 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
     return 0
 
 
+_CURSOR_EVENTS = frozenset({
+    "preToolUse", "beforeShellExecution", "beforeMCPExecution", "stop",
+})
+
+
+def _is_cursor(event: dict) -> bool:
+    return event.get("hook_event_name") in _CURSOR_EVENTS
+
+
+def _cursor_permission(decision: str, reason: str | None = None) -> int:
+    payload: dict = {"permission": decision}
+    if reason:
+        message = f"[statutor] {reason}"
+        payload["user_message"] = message
+        payload["agent_message"] = message
+    print(json.dumps(payload))
+    return 0
+
+
+def _cursor_mcp_payload(event: dict) -> tuple[str, dict]:
+    tool = str(event.get("tool_name") or "")
+    if tool.startswith("MCP:"):
+        tool = tool[4:]
+    raw = event.get("tool_input", {})
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            payload = {}
+    elif isinstance(raw, dict):
+        payload = raw
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return tool, payload
+
+
+def _run_cursor_event(event: dict, stop_mode: bool) -> int:
+    """Cursor hooks.json protocol: permission JSON, fail-open as allow."""
+    try:
+        roots = event.get("workspace_roots") or []
+        workspace = roots[0] if isinstance(roots, list) and roots else None
+        cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
+        cwd = cwd or workspace
+        name = event.get("hook_event_name")
+        if stop_mode or name == "stop":
+            if event.get("status") in ("aborted", "error"):
+                return _cursor_permission("allow")
+            if not cwd:
+                return _cursor_permission("allow")
+            # Reuse Stop doctor; Cursor accepts the Claude nested shape.
+            return _run_stop_event({**event, "cwd": cwd, "stop_hook_active": False}, False)
+        if not cwd:
+            return _cursor_permission("allow")
+        if name == "beforeShellExecution":
+            reason = _automatic_reason(
+                "bash", {"command": event.get("command", "")}, cwd)
+        elif name == "beforeMCPExecution":
+            tool, payload = _cursor_mcp_payload(event)
+            reason = _automatic_reason(tool, payload, cwd)
+            if reason is None and payload.get("command"):
+                reason = _automatic_reason("bash", payload, cwd)
+        else:
+            tool, payload = _event_tool(event)
+            reason = _automatic_reason(
+                tool, payload, cwd, truncated=_truncated_input(event))
+        if reason:
+            return _cursor_permission("deny", reason)
+        return _cursor_permission("allow")
+    except Exception:
+        try:
+            return _cursor_permission("allow")
+        except Exception:
+            return 0
+
+
 def run_hook(argv: list[str] | None = None) -> int:
     argv = argv or []
     stop_mode = "--stop" in argv
@@ -1107,6 +1205,7 @@ def run_hook(argv: list[str] | None = None) -> int:
               "run `statutor --help` for modes.", file=sys.stderr)
         return 64
     is_antigravity = force_antigravity
+    raw = ""
     try:
         raw = sys.stdin.read()
         if not raw.strip():
@@ -1115,7 +1214,16 @@ def run_hook(argv: list[str] | None = None) -> int:
         if not isinstance(event, dict):
             return 0
     except Exception:
+        # Cursor permission hooks fail-closed on exit 0 plus invalid JSON.
+        if "hook_event_name" in raw:
+            try:
+                return _cursor_permission("allow")
+            except Exception:
+                return 0
         return 0  # fail open
+
+    if _is_cursor(event):
+        return _run_cursor_event(event, stop_mode)
 
     if "toolCall" in event or "workspacePaths" in event or "executionNum" in event or "terminationReason" in event:
         is_antigravity = True
@@ -1129,9 +1237,8 @@ def run_hook(argv: list[str] | None = None) -> int:
             raw_tool = tool_call.get("name", "")
             raw_args = tool_call.get("args", {}) or {}
             workspace_paths = event.get("workspacePaths", [])
-            target_file = raw_args.get("TargetFile")
-            file_dir = os.path.dirname(os.path.abspath(target_file)) if target_file else None
-            cwd = raw_args.get("Cwd") or file_dir or event.get("cwd") or (workspace_paths[0] if workspace_paths else None)
+            workspace = workspace_paths[0] if workspace_paths else None
+            cwd = raw_args.get("Cwd") or event.get("cwd") or workspace
             if not cwd:
                 print(json.dumps({"decision": "allow"}))
                 return 0

@@ -108,7 +108,7 @@ def test_unknown_role_survives_without_inference(tmp_path: Path) -> None:
     assert begun["session"]["origin_harness"] == "unknown"
 
 
-@pytest.mark.parametrize("harness", ["claude", "grok"])
+@pytest.mark.parametrize("harness", ["claude", "grok", "cursor"])
 def test_automatic_harness_cannot_record_mutation(tmp_path: Path, harness: str) -> None:
     state = _state(tmp_path)
     repo = _repo(tmp_path, "repo")
@@ -136,6 +136,42 @@ def test_complete_cas_rejects_second_session(tmp_path: Path) -> None:
     with pytest.raises(worker.WorkerError, match="another local session"):
         worker.worker_complete(state, str(repo),
                                session_id=second["session"]["session_id"])
+
+
+def test_complete_uses_policy_overwrite_bounded_filename(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    repo = tmp_path / "renamed"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / ".statutor.yaml").write_text(
+        "bash_guard: true\n"
+        "governed:\n"
+        "  - pattern: STATUS.md\n"
+        "    policy: overwrite_bounded\n"
+        "    max_lines: 40\n",
+        encoding="utf-8")
+    machine, _ = worker.ensure_machine(state)
+    (repo / "STATUS.md").write_text(
+        "# STATUS\n\nlast_verified: 2026-10-22 by test\n"
+        "last_worker: human\nlast_machine: "
+        + str(machine["machine_id"])
+        + "\nhandoff_id: abc123\nsupersedes: none\n",
+        encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    begun = worker.worker_begin(state, str(repo), harness="human")
+    assert begun["session"]["baseline_handoff_id"] == "abc123"
+    (repo / "STATUS.md").write_text(
+        "# STATUS\n\nlast_verified: 2026-10-22 by test\n"
+        "last_worker: human\nlast_machine: "
+        + str(machine["machine_id"])
+        + "\nhandoff_id: def456\nsupersedes: abc123\n",
+        encoding="utf-8")
+    done = worker.worker_complete(state, str(repo),
+                                  session_id=begun["session"]["session_id"])
+    assert done["record"]["handoff_id"] == "def456"
 
 
 def test_complete_requires_fresh_id_and_supersedes(tmp_path: Path) -> None:

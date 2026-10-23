@@ -30,7 +30,7 @@ from typing import Mapping
 import statutor_global as substrate
 
 SCHEMA_VERSION = 1
-HARNESSES = ("claude", "codex", "opencode", "antigravity", "gemini", "grok", "custom", "human", "unknown")
+HARNESSES = ("claude", "codex", "opencode", "antigravity", "gemini", "grok", "cursor", "custom", "human", "unknown")
 ROLES = ("primary", "subagent", "unknown")
 EVENTS = ("activity", "attempt", "mutation")
 BASES = ("completed", "mutation", "activity", "attempt")
@@ -113,6 +113,20 @@ CAPABILITIES: dict[str, dict[str, object]] = {
                 "MCP tool ids and bash-mode commands never reach the "
                 "matcher. Subagent PreToolUse is unproved; the 1.0.62 probe "
                 "saw no child session.",
+    },
+    "cursor": {
+        "verified_against": "Cursor hooks.json schema version 1",
+        "attempt_surface": "preToolUse / beforeShellExecution / beforeMCPExecution",
+        "proves": ["activity", "attempt"],
+        "proves_mutation": False,
+        "proves_completion": False,
+        "role_signal": False,
+        "session_correlation": "host conversation_id when exposed, else generated",
+        "note": "Permission hooks always emit Cursor permission JSON, "
+                "including fail-open allow. Stop surfaces drift only; "
+                "completion is executor-run `worker complete`. Tab "
+                "completions and unmapped MCP payloads stay with the "
+                "git floor.",
     },
     "custom": {
         "verified_against": "n/a (caller-proved)",
@@ -437,13 +451,21 @@ def parse_handoff_fields(text: str) -> dict[str, str | None]:
     return fields
 
 
+def _handoff_filename(ledger_root: str | None) -> str:
+    if ledger_root is None:
+        return "HANDOFF.md"
+    import statutor_core
+    return statutor_core.overwrite_bounded_filename(ledger_root)
+
+
 def _read_handoff_text(ledger_root: str | None, cwd: str,
                        ref: str | None = None) -> tuple[str | None, str | None]:
     """Return (digest, text) for the worktree file or a git ref blob."""
+    name = _handoff_filename(ledger_root)
     if ref is None:
         if ledger_root is None:
             return None, None
-        path = Path(ledger_root) / "HANDOFF.md"
+        path = Path(ledger_root) / name
         try:
             content = path.read_bytes()
         except OSError:
@@ -453,10 +475,10 @@ def _read_handoff_text(ledger_root: str | None, cwd: str,
             return digest, content.decode("utf-8")
         except UnicodeDecodeError:
             return digest, None
-    relative = "HANDOFF.md"
+    relative = name
     if ledger_root is not None:
         try:
-            relative = os.path.relpath(os.path.join(ledger_root, "HANDOFF.md"),
+            relative = os.path.relpath(os.path.join(ledger_root, name),
                                        _resolve_worktree(cwd)).replace(os.sep, "/")
         except ValueError:
             return None, None
@@ -996,14 +1018,15 @@ def worker_complete(state_root: Path, cwd: str, *,
     wt_root = _resolve_worktree(cwd)
     wt_id = _worktree_id(wt_root)
     current_digest, current_handoff = read_handoff(ledger, cwd)
+    name = _handoff_filename(ledger)
     if current_digest is None:
-        raise WorkerError("completion requires a HANDOFF.md in the ledger")
+        raise WorkerError(f"completion requires a {name} in the ledger")
     current_id = current_handoff if current_handoff else "none"
-    ledger_path = Path(ledger) / "HANDOFF.md"
+    ledger_path = Path(ledger) / name
     try:
         handoff_text = ledger_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise WorkerError(f"cannot read HANDOFF.md: {exc}") from exc
+        raise WorkerError(f"cannot read {name}: {exc}") from exc
     shape_problems = validate_handoff_metadata(handoff_text)
     if shape_problems:
         raise WorkerError("HANDOFF attribution block is malformed: "

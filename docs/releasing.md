@@ -2,7 +2,7 @@
 
 Python, the root plugin, and the Antigravity plugin share a version. npm and
 Cargo have independent versions. The hardening candidate uses Python/plugin
-0.7.4, npm 0.2.0, and Cargo 0.1.2. Read the manifests for later candidates.
+0.7.5, npm 0.2.0, and Cargo 0.1.3. Read the manifests for later candidates.
 
 1. Add behavioral regressions before fixing a reproduced failure. Run the
    affected tests, then obtain independent review of the final patch.
@@ -14,7 +14,7 @@ Cargo have independent versions. The hardening candidate uses Python/plugin
    and optional-test dependency `PyYAML`, Node 24, and Cargo available:
 
    ```sh
-   python scripts/release_gate.py --tag v0.7.4 --dist-dir /tmp/statutor-release-dist
+   python scripts/release_gate.py --tag v0.7.5 --dist-dir /tmp/statutor-release-dist
    ```
 
    The output directory must be empty. The gate tests a clone of the exact

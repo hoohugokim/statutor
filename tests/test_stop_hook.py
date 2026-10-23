@@ -41,6 +41,40 @@ def test_malformed_event_metadata_fails_open(event: dict) -> None:
     assert result.stderr == ""
 
 
+def test_empty_workspace_paths_does_not_doctor_process_cwd(tmp_path) -> None:
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {
+        "executionNum": 1,
+        "workspacePaths": [],
+        "terminationReason": "model_stop",
+    }
+    result = subprocess.run(
+        [sys.executable, str(STOP_HOOK)],
+        input=json.dumps(event), cwd=str(tmp_path),
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["decision"] == "allow"
+
+
+def test_cursor_empty_workspace_roots_does_not_doctor_process_cwd(tmp_path) -> None:
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {
+        "hook_event_name": "stop",
+        "status": "completed",
+        "workspace_roots": [],
+    }
+    result = subprocess.run(
+        [sys.executable, str(STOP_HOOK)],
+        input=json.dumps(event), cwd=str(tmp_path),
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == ""
+
+
 def _scaffold(root: Path) -> None:
     statutor_core.run_init(str(root))
 

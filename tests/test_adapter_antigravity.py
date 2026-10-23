@@ -396,6 +396,34 @@ def test_hook_pre_tool_use_outside_workspace_without_cwd_allows(monkeypatch, cap
     assert out["decision"] == "allow"
 
 
+def test_hook_relative_target_file_uses_workspace_not_process_cwd(
+    monkeypatch, capsys, tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "ledger"
+    kernel.run_init(str(ledger))
+    capsys.readouterr()
+    (ledger / "plans" / "archive" / "probe.md").write_text("old\n", encoding="utf-8")
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    event = {
+        "toolCall": {
+            "name": "write_to_file",
+            "args": {
+                "TargetFile": "plans/archive/probe.md",
+                "CodeContent": "touch",
+            },
+        },
+        "workspacePaths": [str(ledger)],
+    }
+    monkeypatch.chdir(plugin)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    exit_code = kernel.run_hook()
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["decision"] == "deny"
+    assert "frozen" in out["reason"]
+
+
 # --------------------------------------------------------------------------
 # 4. Worker provenance & capabilities
 # --------------------------------------------------------------------------

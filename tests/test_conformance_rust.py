@@ -71,6 +71,7 @@ EXPECTED = {
     "s58_state_new_id_must_advance": (1, "greater than existing maximum T-0001"),
     "s59_state_binary_denied": (1, "state content must be valid UTF-8"),
     "s60_tmp_swap_onto_policy_denied": (1, "missing, stale, or unsafe receipt"),
+    "s61_receipt_omitting_null_optional_oids_authorizes": (0, ""),
 }
 
 

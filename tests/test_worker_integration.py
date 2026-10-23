@@ -166,7 +166,7 @@ def test_expired_session_may_still_complete_explicitly(tmp_path: Path) -> None:
 def test_capabilities_pin_surfaces_and_gaps() -> None:
     caps = worker.all_capabilities()
     assert set(caps["capabilities"]) == set(worker.HARNESSES)
-    for auto in ("claude", "codex", "opencode", "grok"):
+    for auto in ("claude", "codex", "opencode", "grok", "cursor"):
         entry = caps["capabilities"][auto]
         assert entry["proves_mutation"] is False
         assert entry["proves_completion"] is False

@@ -89,6 +89,57 @@ def test_first_completion_from_attributed_baseline(tmp_path: Path) -> None:
     assert done["reconciled"] is None
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_completion_retry_preserves_record_and_registry(
+        tmp_path: Path, legacy: bool) -> None:
+    state = _state(tmp_path)
+    machine, _ = worker.ensure_machine(state)
+    block = "" if legacy else ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="h0", sup="none")
+    repo = _repo(tmp_path, "repo", block)
+    begun = worker.worker_begin(state, str(repo), harness="claude")
+    sid = begun["session"]["session_id"]
+    if not legacy:
+        (repo / "HANDOFF.md").write_text(_handoff(ATTRIBUTED.format(
+            mid=machine["machine_id"], hid="h1", sup="h0")))
+    done = worker.worker_complete(state, str(repo), session_id=sid)
+    registry = worker._registry_path(state, begun["project_id"])
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="session already completed") as error:
+        worker.worker_complete(state, str(repo), session_id=sid)
+    assert "worker show --basis completed" in str(error.value)
+    assert "reconcile" not in str(error.value)
+    assert registry.read_bytes() == before
+    assert worker.worker_show(state, str(repo))["record"] == done["record"]
+    assert worker.worker_active(state, str(repo))["leases"] == []
+
+
+@pytest.mark.parametrize("change", ["body", "id", "machine"])
+def test_completed_session_cannot_claim_changed_handoff(
+        tmp_path: Path, change: str) -> None:
+    state = _state(tmp_path)
+    machine, _ = worker.ensure_machine(state)
+    repo = _repo(tmp_path, "repo", ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="h0", sup="none"))
+    begun = worker.worker_begin(state, str(repo), harness="claude")
+    sid = begun["session"]["session_id"]
+    path = repo / "HANDOFF.md"
+    path.write_text(_handoff(ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="h1", sup="h0")))
+    worker.worker_complete(state, str(repo), session_id=sid)
+    if change == "machine":
+        worker.rotate_machine(state, confirm=True)
+    else:
+        text = path.read_text()
+        path.write_text(text + "changed\n" if change == "body"
+                        else text.replace("handoff_id: h1", "handoff_id: h2"))
+    registry = worker._registry_path(state, begun["project_id"])
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="already completed"):
+        worker.worker_complete(state, str(repo), session_id=sid)
+    assert registry.read_bytes() == before
+
+
 # --------------------------------------------------------------------------
 # same-machine sibling reconciliation
 # --------------------------------------------------------------------------
@@ -115,6 +166,12 @@ def test_reconciliation_absorbing_sibling_completes(tmp_path: Path) -> None:
     done = worker.worker_complete(state, str(repo), session_id=sid)
     assert done["record"]["handoff_id"] == "hC"
     assert set(done["reconciled"]) == {"h0", "hA"}
+    path = worker._registry_path(state, done["project_id"])
+    before = path.read_bytes()
+    with pytest.raises(worker.WorkerError, match="session already completed"):
+        worker.worker_complete(state, str(repo), session_id=sid)
+    assert path.read_bytes() == before
+    assert worker.worker_show(state, str(repo))["record"] == done["record"]
 
 
 def test_reconciliation_ignoring_sibling_rejected(tmp_path: Path) -> None:
@@ -123,6 +180,34 @@ def test_reconciliation_ignoring_sibling_rejected(tmp_path: Path) -> None:
         mid=mid, hid="hB", sup="h0")))
     with pytest.raises(worker.WorkerError, match="another local session"):
         worker.worker_complete(state, str(repo), session_id=sid)
+
+
+def test_old_completion_retry_cannot_replace_newer_local_completion(
+        tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    machine, _ = worker.ensure_machine(state)
+    repo = _repo(tmp_path, "repo", ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="h0", sup="none"))
+    first = worker.worker_begin(state, str(repo), harness="claude")
+    path = repo / "HANDOFF.md"
+    first_text = _handoff(ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="hA", sup="h0"))
+    path.write_text(first_text)
+    worker.worker_complete(state, str(repo),
+                           session_id=first["session"]["session_id"])
+    second = worker.worker_begin(state, str(repo), harness="claude")
+    path.write_text(_handoff(ATTRIBUTED.format(
+        mid=machine["machine_id"], hid="hB", sup="hA")))
+    latest = worker.worker_complete(state, str(repo),
+                                    session_id=second["session"]["session_id"])
+    path.write_text(first_text)
+    registry = worker._registry_path(state, first["project_id"])
+    before = registry.read_bytes()
+    with pytest.raises(worker.WorkerError, match="already completed"):
+        worker.worker_complete(state, str(repo),
+                               session_id=first["session"]["session_id"])
+    assert registry.read_bytes() == before
+    assert worker.worker_show(state, str(repo))["record"] == latest["record"]
 
 
 # --------------------------------------------------------------------------
@@ -260,6 +345,85 @@ def test_cli_record_outside_ledger_denied(
                               "--event", "attempt", "--json"])
     capsys.readouterr()
     assert code == 1
+
+
+@pytest.mark.parametrize("mode", ["machine", "worker"])
+@pytest.mark.parametrize("position", ["before", "after", "override"])
+def test_cli_root_options_reach_resolver(
+        tmp_path: Path, capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch, mode: str, position: str) -> None:
+    expected = {name: str(tmp_path / name)
+                for name in ("home", "config_root", "state_root")}
+    seen = []
+    resolve = worker.substrate.resolve_roots
+
+    def capture(**kwargs):
+        seen.append(kwargs)
+        return resolve(**kwargs)
+
+    monkeypatch.setattr(worker.substrate, "resolve_roots", capture)
+    monkeypatch.setenv("HOME", str(tmp_path / "fallback-home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "fallback-config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "fallback-state"))
+    options = [item for name, value in expected.items()
+               for item in ("--" + name.replace("_", "-"), value)]
+    command = "show" if mode == "machine" else "capabilities"
+    if position == "before":
+        argv = [mode, *options, command, "--json"]
+    elif position == "after":
+        argv = [mode, command, *options, "--json"]
+    else:
+        parent_options = [item for name in expected
+                          for item in ("--" + name.replace("_", "-"),
+                                       str(tmp_path / ("parent-" + name)))]
+        argv = [mode, *parent_options, command, *options, "--json"]
+    assert _cli(argv, capsys)[0] == 0
+    assert seen[-1] == expected
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_cli_state_root_contains_entire_worker_flow_and_rotation(
+        tmp_path: Path, capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch, position: str) -> None:
+    state = _state(tmp_path, "explicit-state")
+    fallback = tmp_path / "fallback-state"
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "fake-config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(fallback))
+    repo = _repo(tmp_path, "repo", "")
+
+    def run(mode, command, *options):
+        roots = ["--state-root", str(state)]
+        argv = ([mode, *roots, command] if position == "before"
+                else [mode, command, *roots])
+        code, result = _cli([*argv, *options, "--json"], capsys)
+        assert code == 0
+        return result
+
+    machine = run("machine", "show")["machine"]
+    assert (state / "machine.json").is_file()
+    run("machine", "set-label", "explicit-only")
+    begun = run("worker", "begin", "--harness", "human", "--cwd", str(repo))
+    sid = begun["session"]["session_id"]
+    run("worker", "record", "--harness", "human", "--event", "activity",
+        "--session", sid, "--cwd", str(repo))
+    assert run("worker", "active", "--cwd", str(repo))["leases"]
+    completed = run("worker", "complete", "--session", sid, "--cwd", str(repo))
+    roots = ["--state-root", str(state)]
+    retry = (["worker", *roots, "complete"] if position == "before"
+             else ["worker", "complete", *roots])
+    code, _ = _cli([*retry, "--session", sid, "--cwd", str(repo), "--json"], capsys)
+    assert code == 1
+    assert run("worker", "show", "--cwd", str(repo))["record"] == completed["record"]
+    run("worker", "compare", "HEAD", "--cwd", str(repo))
+    run("worker", "capabilities")
+    run("worker", "new-id")
+    rotated = run("machine", "rotate", "--confirm")
+    assert rotated["previous_machine_id"] == machine["machine_id"]
+    assert rotated["machine"]["machine_id"] != machine["machine_id"]
+    assert json.loads((state / "machine.json").read_text())["machine_id"] == \
+        rotated["machine"]["machine_id"]
+    assert not (fallback / "statutor").exists()
 
 
 # --------------------------------------------------------------------------

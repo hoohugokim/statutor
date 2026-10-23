@@ -75,6 +75,44 @@ def test_cursor_empty_workspace_roots_does_not_doctor_process_cwd(tmp_path) -> N
     assert result.stdout.strip() == ""
 
 
+def test_cursor_stop_hook_emits_native_followup_once(tmp_path):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    event = {"hook_event_name": "stop", "status": "completed",
+             "loop_count": 0, "workspace_roots": [str(tmp_path)]}
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    out = json.loads(result.stdout)
+    assert set(out) == {"followup_message"}
+    assert "missing governed file: TASKS.md" in out["followup_message"]
+    event["loop_count"] = 1
+    result = run_stop_hook(json.dumps(event))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("status", ["aborted", "error"])
+def test_cursor_stop_hook_failed_turn_stays_silent(tmp_path, status):
+    _scaffold(tmp_path)
+    (tmp_path / "TASKS.md").unlink()
+    result = run_stop_hook(json.dumps({
+        "hook_event_name": "stop", "status": status,
+        "loop_count": 0, "workspace_roots": [str(tmp_path)],
+    }))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_cursor_stop_hook_clean_scaffold_stays_silent(tmp_path):
+    _scaffold(tmp_path)
+    result = run_stop_hook(json.dumps({
+        "hook_event_name": "stop", "status": "completed",
+        "loop_count": 0, "workspace_roots": [str(tmp_path)],
+    }))
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
 def _scaffold(root: Path) -> None:
     statutor_core.run_init(str(root))
 

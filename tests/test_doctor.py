@@ -187,6 +187,28 @@ def test_missing_governed_file_errors(tmp_path, monkeypatch, capsys):
     assert "ERROR missing governed file: TASKS.md" in out
 
 
+@pytest.mark.parametrize("filename", ["HANDOFF.md", "STATUS.md"])
+def test_unverified_sentinel_explains_next_step_without_rewriting(
+    tmp_path, monkeypatch, capsys, filename,
+):
+    _write_ledger(tmp_path, omit={"HANDOFF.md"})
+    state = tmp_path / filename
+    original = _handoff_text("1970-01-01")
+    state.write_text(original, encoding="utf-8")
+    policy = _policy_soft_max_5()
+    policy["governed"][1]["pattern"] = filename
+    _stub_yaml(monkeypatch, policy)
+
+    out, code = run_doctor(monkeypatch, capsys, tmp_path)
+
+    assert code == 0
+    assert f"{filename} is not yet verified" in out
+    assert "run project checks" in out
+    assert "replace last_verified with the verification date" in out
+    assert "days ago" not in out
+    assert state.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize("tasks,fragment", [
     ("- [ ] T-0001 one\n- [x] T-0001 duplicate\n", "duplicate state task ID T-0001"),
     ("- [maybe] T-0001 malformed\n", "state line 1 must be"),

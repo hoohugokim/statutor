@@ -145,6 +145,66 @@ def test_cursor_malformed_json_emits_allow(monkeypatch, capsys) -> None:
     assert out["permission"] == "allow"
 
 
+def test_cursor_stop_emits_native_followup_once(monkeypatch, capsys, tmp_path):
+    kernel.run_init(str(tmp_path))
+    capsys.readouterr()
+    (tmp_path / "TASKS.md").unlink()
+    event = {"hook_event_name": "stop", "status": "completed",
+             "loop_count": 0, "workspace_roots": [str(tmp_path)]}
+    out = _cursor_hook(monkeypatch, capsys, event)
+    assert set(out) == {"followup_message"}
+    assert "missing governed file: TASKS.md" in out["followup_message"]
+    event["loop_count"] = 1
+    assert _cursor_hook(monkeypatch, capsys, event) == {}
+
+
+@pytest.mark.parametrize("status", ["aborted", "error"])
+def test_cursor_stop_does_not_continue_failed_turn(monkeypatch, capsys, tmp_path, status):
+    kernel.run_init(str(tmp_path))
+    capsys.readouterr()
+    (tmp_path / "TASKS.md").unlink()
+    event = {"hook_event_name": "stop", "status": status,
+             "loop_count": 0, "workspace_roots": [str(tmp_path)]}
+    assert _cursor_hook(monkeypatch, capsys, event) == {}
+
+
+@pytest.mark.parametrize("scaffold", [False, True])
+def test_cursor_stop_clean_or_outside_ledger_stays_silent(monkeypatch, capsys, tmp_path, scaffold):
+    if scaffold:
+        kernel.run_init(str(tmp_path))
+        capsys.readouterr()
+    event = {"hook_event_name": "stop", "status": "completed",
+             "loop_count": 0, "workspace_roots": [str(tmp_path)]}
+    assert _cursor_hook(monkeypatch, capsys, event) == {}
+
+
+def test_cursor_stop_missing_workspace_stays_silent(monkeypatch, capsys, tmp_path):
+    kernel.run_init(str(tmp_path))
+    capsys.readouterr()
+    (tmp_path / "TASKS.md").unlink()
+    monkeypatch.chdir(tmp_path)
+    assert _cursor_hook(monkeypatch, capsys, {
+        "hook_event_name": "stop", "status": "completed",
+        "loop_count": 0, "workspace_roots": [],
+    }) == {}
+
+
+def test_cursor_stop_doctor_crash_fails_open(monkeypatch, capsys, tmp_path):
+    import statutor_doctor
+
+    kernel.run_init(str(tmp_path))
+    capsys.readouterr()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("doctor bug")
+
+    monkeypatch.setattr(statutor_doctor, "check", boom)
+    assert _cursor_hook(monkeypatch, capsys, {
+        "hook_event_name": "stop", "status": "completed",
+        "loop_count": 0, "workspace_roots": [str(tmp_path)],
+    }) == {}
+
+
 def test_cursor_delete_denies_governed(monkeypatch, capsys, tmp_path: Path) -> None:
     kernel.run_init(str(tmp_path))
     capsys.readouterr()

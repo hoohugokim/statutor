@@ -1423,10 +1423,36 @@ def test_check_honors_explicit_cwd_argument_over_process_cwd(tmp_path):
     assert "frozen" in result.stderr
 
 
-def test_check_not_fail_open_on_invalid_json_quirk():
-    result = run_kernel(["check", "Write", "{not json"])
-    assert result.returncode == 1
-    assert "Traceback" in result.stderr
+@pytest.mark.parametrize("payload", ["{not json", "42", "[]", "null", '"text"'])
+@pytest.mark.parametrize("prefix", [[], ["--if-ledger"]])
+def test_check_invalid_payload_has_usage_error(payload, prefix):
+    result = run_kernel(["check", *prefix, "Write", payload])
+    assert result.returncode == 64
+    assert "JSON object" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+def test_check_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["check", "write", "{}", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor check" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["check"], ["check", "--if-ledger"],
+                                      ["staged"], ["trust", "approve"]])
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_command_help_without_ledger(command, flag, tmp_path):
+    result = run_kernel([*command, flag], cwd=str(tmp_path))
+    assert result.returncode == 0
+    assert result.stdout.startswith("usage: statutor ")
+    assert result.stderr == ""
+
+
+def test_staged_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["staged", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor staged" in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1436,7 +1462,9 @@ def test_check_not_fail_open_on_invalid_json_quirk():
 def test_cli_unknown_mode():
     result = run_kernel(["bogus"])
     assert result.returncode == 64
-    assert "typed project-ledger kernel" in result.stdout
+    assert "unknown command: bogus" in result.stderr
+    assert "statutor --help" in result.stderr
+    assert result.stdout == ""
 
 
 # --------------------------------------------------------------------------

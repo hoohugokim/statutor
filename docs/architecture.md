@@ -40,16 +40,19 @@ Explicit checks can be used by custom integrations. The
 ## Agent adapters
 
 The root of this repository is the Claude Code plugin. Grok Build uses the
-same hook protocol and plugin with its own tool vocabulary. OpenCode uses a
-TypeScript adapter with 2.x `setup()` and 1.x `server()` entrypoints. Codex
-uses the shared hook command for shell and `apply_patch` events. Antigravity
-normalizes native tool arguments, including batch replacements.
+same hook protocol and plugin with its own tool vocabulary. Cursor uses
+`hooks.json` v1 (`preToolUse`, `beforeShellExecution`, `beforeMCPExecution`,
+`stop`) and Cursor permission JSON. OpenCode uses a TypeScript adapter with
+2.x `setup()` and 1.x `server()` entrypoints. Codex uses the shared hook
+command for shell and `apply_patch` events. Antigravity normalizes native
+tool arguments, including batch replacements.
 
 Use each adapter guide for registration and exact coverage:
 [Codex](../adapters/codex/README.md),
 [OpenCode](../adapters/opencode/README.md),
-[Antigravity](../adapters/antigravity/README.md), and
-[Grok Build](../adapters/grok/README.md).
+[Antigravity](../adapters/antigravity/README.md),
+[Grok Build](../adapters/grok/README.md), and
+[Cursor](../adapters/cursor/README.md).
 
 Hook coverage varies by host. Server-namespaced MCP tool IDs and required
 sections in partial Update File patches are known gaps. The floor judges the

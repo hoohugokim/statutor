@@ -105,6 +105,70 @@ def test_native_batch_event_denies_frozen_write(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["decision"] == "deny"
 
 
+@pytest.mark.parametrize("filename,decision", [
+    ("plans/archive/probe.md", "deny"),
+    ("notes/plain.md", "allow"),
+])
+def test_absolute_target_alone_resolves_its_ledger(tmp_path: Path, filename, decision):
+    ledger = tmp_path / "ledger"
+    kernel.run_init(str(ledger))
+    event = {
+        "workspacePaths": [],
+        "toolCall": {"name": "write_to_file", "args": {
+            "TargetFile": str(ledger / filename), "CodeContent": "change\n",
+        }},
+    }
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "core/statutor_core.py"), "hook"],
+        input=json.dumps(event), cwd=str(tmp_path), text=True,
+        capture_output=True, check=True,
+    )
+    out = json.loads(result.stdout)
+    assert out["decision"] == decision
+    if decision == "deny":
+        assert "frozen" in out["reason"]
+
+
+@pytest.mark.parametrize("target", [None, 42, "plans/archive/probe.md"])
+def test_unresolved_target_does_not_infer_process_ledger(tmp_path: Path, target):
+    kernel.run_init(str(tmp_path))
+    args = {"CodeContent": "change\n"}
+    if target is not None:
+        args["TargetFile"] = target
+    event = {"workspacePaths": [],
+             "toolCall": {"name": "write_to_file", "args": args}}
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "core/statutor_core.py"), "hook"],
+        input=json.dumps(event), cwd=str(tmp_path), text=True,
+        capture_output=True, check=True,
+    )
+    assert json.loads(result.stdout)["decision"] == "allow"
+
+
+@pytest.mark.parametrize("context", ["Cwd", "cwd", "workspacePaths"])
+def test_explicit_context_precedes_absolute_target_fallback(tmp_path: Path, context):
+    ledger = tmp_path / "ledger"
+    kernel.run_init(str(ledger))
+    non_ledger = tmp_path / "outside"
+    non_ledger.mkdir()
+    args = {"TargetFile": str(ledger / "plans/archive/probe.md"),
+            "CodeContent": "change\n"}
+    event = {"workspacePaths": [],
+             "toolCall": {"name": "write_to_file", "args": args}}
+    if context == "Cwd":
+        args[context] = str(non_ledger)
+    elif context == "cwd":
+        event[context] = str(non_ledger)
+    else:
+        event[context] = [str(non_ledger)]
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "core/statutor_core.py"), "hook"],
+        input=json.dumps(event), cwd=str(tmp_path), text=True,
+        capture_output=True, check=True,
+    )
+    assert json.loads(result.stdout)["decision"] == "allow"
+
+
 def test_batch_tool_is_registered() -> None:
     matcher = json.loads((ADAPTER_ROOT / "hooks.json").read_text())["statutor"]["PreToolUse"][0]["matcher"]
     assert "multi_replace_file_content" in matcher.split("|")
@@ -394,6 +458,34 @@ def test_hook_pre_tool_use_outside_workspace_without_cwd_allows(monkeypatch, cap
     assert exit_code == 0
     out = json.loads(capsys.readouterr().out.strip())
     assert out["decision"] == "allow"
+
+
+def test_hook_relative_target_file_uses_workspace_not_process_cwd(
+    monkeypatch, capsys, tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "ledger"
+    kernel.run_init(str(ledger))
+    capsys.readouterr()
+    (ledger / "plans" / "archive" / "probe.md").write_text("old\n", encoding="utf-8")
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    event = {
+        "toolCall": {
+            "name": "write_to_file",
+            "args": {
+                "TargetFile": "plans/archive/probe.md",
+                "CodeContent": "touch",
+            },
+        },
+        "workspacePaths": [str(ledger)],
+    }
+    monkeypatch.chdir(plugin)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    exit_code = kernel.run_hook()
+    assert exit_code == 0
+    out = json.loads(capsys.readouterr().out.strip())
+    assert out["decision"] == "deny"
+    assert "frozen" in out["reason"]
 
 
 # --------------------------------------------------------------------------

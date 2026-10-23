@@ -53,6 +53,7 @@ the CLI and initializing a ledger do not register agent hooks.
 | OpenCode | File edits, shell, and patches | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/opencode/README.md) |
 | Google Antigravity | File edits, batch edits, and shell | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/antigravity/README.md) |
 | Grok Build | File edits and shell | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/grok/README.md) |
+| Cursor | File edits, shell, and MCP when mapped | [Guide](https://github.com/hoohugokim/statutor/blob/main/adapters/cursor/README.md) |
 | Custom agents | Checks through the CLI or Python API | [API and architecture](https://github.com/hoohugokim/statutor/blob/main/docs/architecture.md) |
 
 #### Claude Code
@@ -76,7 +77,7 @@ installed, add this entry to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/hoohugokim/statutor
-    rev: v0.7.4
+    rev: v0.7.5
     hooks: [{id: statutor}]
 ```
 

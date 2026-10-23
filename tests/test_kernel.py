@@ -296,6 +296,23 @@ def test_load_policy_malformed_committed_policy_is_error(tmp_path):
         statutor_core.load_policy(str(tmp_path))
 
 
+@git_required
+def test_hook_denies_malformed_committed_policy(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".statutor.yaml").write_text("::: not yaml [\n", encoding="utf-8")
+    commit_all(tmp_path, "bad policy")
+    result = run_kernel(["hook"], input_str=json.dumps({
+        "tool_name": "Write",
+        "tool_input": {"file_path": "notes/x.md", "content": "x"},
+        "cwd": str(tmp_path),
+    }))
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    reason = data["hookSpecificOutput"]["permissionDecisionReason"]
+    assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "committed policy invalid" in reason
+
+
 def test_load_policy_empty_governed_list_honored(tmp_path):
     git(tmp_path, "init", "-q", "-b", "main")
     (tmp_path / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
@@ -331,11 +348,18 @@ def test_validate_non_mutating_tools_pass(tmp_path, tool):
 
 @pytest.mark.parametrize("tool,file_path", [
     ("multiedit", "DECISIONS.md"), ("notebookedit", "DECISIONS.md"),
-    ("multiedit", "plans/archive/x.md"), ("notebookedit", "plans/archive/x.md"),
+    ("MultiEdit", "plans/archive/x.md"), ("NotebookEdit", "plans/archive/x.md"),
 ])
-def test_validate_multiedit_notebookedit_uncovered_quirk(tmp_path, tool, file_path):
+def test_validate_multiedit_notebookedit_deny_unproved_governed(tmp_path, tool, file_path):
     payload = {"file_path": str(tmp_path / file_path)}
-    assert statutor_core.validate(tool, payload, str(tmp_path), POLICY) is None
+    reason = statutor_core.validate(tool, payload, str(tmp_path), POLICY)
+    assert reason is not None
+    assert "cannot be proved safe" in reason
+
+
+def test_validate_multiedit_ungoverned_path_stays_silent(tmp_path):
+    payload = {"file_path": str(tmp_path / "notes" / "scratch.md")}
+    assert statutor_core.validate("multiedit", payload, str(tmp_path), POLICY) is None
 
 
 @pytest.mark.parametrize("tool", ["write", "edit"])
@@ -1227,6 +1251,15 @@ def test_grok_truncated_governed_write_denies_other_paths_stay_silent(tmp_path):
     assert allowed.stdout == ""
 
 
+def test_truncated_apply_patch_denies_inside_ledger(tmp_path):
+    denied = _grok_hook(tmp_path, {
+        "tool_name": "apply_patch",
+        "tool_input": {"command": "*** Begin Patch\n"},
+        "tool_input_truncated": True,
+    })
+    assert "truncated" in _hook_deny_json(denied)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 def test_grok_hashline_without_old_string_denies_governed_path(tmp_path):
     result = _grok_hook(tmp_path, {
         "tool_name": "hashline_edit",
@@ -1390,10 +1423,36 @@ def test_check_honors_explicit_cwd_argument_over_process_cwd(tmp_path):
     assert "frozen" in result.stderr
 
 
-def test_check_not_fail_open_on_invalid_json_quirk():
-    result = run_kernel(["check", "Write", "{not json"])
-    assert result.returncode == 1
-    assert "Traceback" in result.stderr
+@pytest.mark.parametrize("payload", ["{not json", "42", "[]", "null", '"text"'])
+@pytest.mark.parametrize("prefix", [[], ["--if-ledger"]])
+def test_check_invalid_payload_has_usage_error(payload, prefix):
+    result = run_kernel(["check", *prefix, "Write", payload])
+    assert result.returncode == 64
+    assert "JSON object" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+def test_check_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["check", "write", "{}", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor check" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["check"], ["check", "--if-ledger"],
+                                      ["staged"], ["trust", "approve"]])
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_command_help_without_ledger(command, flag, tmp_path):
+    result = run_kernel([*command, flag], cwd=str(tmp_path))
+    assert result.returncode == 0
+    assert result.stdout.startswith("usage: statutor ")
+    assert result.stderr == ""
+
+
+def test_staged_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["staged", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor staged" in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1403,7 +1462,9 @@ def test_check_not_fail_open_on_invalid_json_quirk():
 def test_cli_unknown_mode():
     result = run_kernel(["bogus"])
     assert result.returncode == 64
-    assert "typed project-ledger kernel" in result.stdout
+    assert "unknown command: bogus" in result.stderr
+    assert "statutor --help" in result.stderr
+    assert result.stdout == ""
 
 
 # --------------------------------------------------------------------------

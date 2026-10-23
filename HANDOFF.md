@@ -1,38 +1,33 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-21 (UTC) by all PR CI, 15 focused checks, independent editorial review, public GitHub rendering/file hashes, and desktop/narrow layout measurements
+last_verified: 2026-10-23 (UTC) by full artifact gate at 81f9d3f (853 passed, zero skips; Rust 7), independent Standards/Spec review
 last_worker: codex
-last_machine: unknown
-handoff_id: b41b8ad341034c5c85c3756a1bb00974
-supersedes: 57e014efb00e443187d60ce57339a5a0
+last_machine: b2246c70d8b687233d5eb990d22786ac
+handoff_id: 2786aadafa23529d530c6145a7325119
+supersedes: c7d36125f7fd3765e236d3a4208f58d4
 
 ## Goal
-Completed the README redesign approved by the human (T-0055).
+Finish the v0.7.5 candidate and follow-up flow audit (D-0030/D-0031).
 
 ## Last verified state
-- README is 144 lines, with a compact masthead, badges, navigation, example,
-  quickstart, agent chooser, Git setup, and visible coverage limits.
-- Four linked guides preserve policy/trust, architecture/API, optional global
-  instructions/skills, and worker provenance. Repository links resolve.
-- Antigravity setup now names a real checkout location, registers batch edits,
-  and describes fail-open behavior and the local Git hook's bypass honestly.
-- GitHub Markdown rendering preserves all navigation targets and four images.
-  Browser DOM layout has no article overflow at 1200 px and 390 px widths.
-- Independent editorial review PASS; 15 focused checks pass, including real
-  npm/Cargo payload audits. Runtime code, versions, and policy are unchanged.
-- Hardened release remains Python/plugins 0.7.4, npm 0.2.0, and crate 0.1.2.
-  PR #2/tag publication and public package verification remain complete.
-- PR #3 merged as d0a3bd2; public README, guides, logo, badges, and navigation verified.
+- Preserved Cursor and 0.7.4 kernel/Rust audit fixes (D-0030).
+- Explicit roots work in both CLI positions; completion retry guidance is
+  accurate without changing schema 1; v0.7.4 registry reader/writer passes.
+- Check input/help, fresh-scaffold/global guidance, Cursor Stop/install,
+  and absolute Antigravity target scoping fixed; independent probes pass.
+- Unicode 16 grammar and embedded templates unchanged; CI adds Python 3.15.
+- All package audits, builds, installed-wheel smoke, and ledger checks pass.
 
 ## Next action
-No documentation work remains. Select the next milestone with the human.
+Review codex/flow-audit-075, then tag/publish v0.7.5 and crate 0.1.3.
+npm remains 0.2.0. Registry publication remains a human step.
 
 ## Gotchas
-- CLI installation and project initialization do not register agent hooks.
-- Hooks fail open; staged checks fail closed. Git hooks allow --no-verify.
-- Begin fresh legacy worker sessions after upgrading; restart Claude for its
-  already-updated 0.7.4 plugin. Global migration remains a separate opt-in.
+- Cursor Stop requests one native follow-up at loop 0; later loops stay quiet.
+  Native Cursor host consumption remains untested.
+- Hooks fail open; staged fails closed. Git hooks allow --no-verify.
+- Python/plugins 0.7.5; npm 0.2.0; crate 0.1.3. No registry publication yet.
 
 ## Do not touch
 Embedded templates/init profiles; frozen archive; DECISIONS.md header;

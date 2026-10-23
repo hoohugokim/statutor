@@ -937,7 +937,10 @@ fn yaml_string<'a>(map: &'a yaml_rust2::yaml::Hash, key: &str) -> Option<&'a str
 }
 
 fn yaml_optional_string(map: &yaml_rust2::yaml::Hash, key: &str) -> Result<Option<String>, ()> {
-    let value = map.get(&yaml_rust2::Yaml::from_str(key)).ok_or(())?;
+    // Match Python dict.get: a missing key is None, not a parse failure.
+    let Some(value) = map.get(&yaml_rust2::Yaml::from_str(key)) else {
+        return Ok(None);
+    };
     if value.is_null() {
         Ok(None)
     } else {

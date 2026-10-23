@@ -127,6 +127,11 @@ def check(root: str) -> None:
                 verified = None
             if verified is not None and verified > date.today():
                 errors.append(f"{handoff_filename} last_verified date {stamp} is in the future.")
+            elif verified is not None and stamp == "1970-01-01":
+                warnings.append(
+                    f"{handoff_filename} is not yet verified — run project checks, "
+                    "then replace last_verified with the verification date."
+                )
             elif verified is not None and (date.today() - verified).days > handoff_stale_days:
                 age = (date.today() - verified).days
                 warnings.append(

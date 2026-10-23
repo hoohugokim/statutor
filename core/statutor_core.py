@@ -1242,7 +1242,11 @@ def run_hook(argv: list[str] | None = None) -> int:
             raw_args = tool_call.get("args", {}) or {}
             workspace_paths = event.get("workspacePaths", [])
             workspace = workspace_paths[0] if workspace_paths else None
-            cwd = raw_args.get("Cwd") or event.get("cwd") or workspace
+            target_file = raw_args.get("TargetFile")
+            target_dir = (os.path.dirname(target_file)
+                          if isinstance(target_file, str) and os.path.isabs(target_file)
+                          else None)
+            cwd = raw_args.get("Cwd") or event.get("cwd") or workspace or target_dir
             if not cwd:
                 print(json.dumps({"decision": "allow"}))
                 return 0

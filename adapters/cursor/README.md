@@ -5,8 +5,9 @@ Cursor hooks use a version-1 `hooks.json` file and JSON over stdin/stdout.
 `permission` JSON. Claude nested `hookSpecificOutput` still works for
 `preToolUse` because Cursor accepts that shape too.
 
-The kernel first resolves the nearest `.statutor.yaml` marker and stays
-silent outside an opted-in ledger. Inside one, policy comes from HEAD.
+The kernel first resolves the nearest `.statutor.yaml` marker. Permission
+events outside an opted-in ledger return `allow` without policy checks or
+messages. Inside a ledger, policy comes from HEAD.
 Requires Statutor **0.7.5 or newer** on `PATH`. Check `statutor version` before
 enabling the hooks; earlier versions do not support Cursor hooks.
 
@@ -51,7 +52,8 @@ run, and a clean ledger stay quiet.
 | `beforeMCPExecution` | mapped tool, else bash if `command` | `tool_input` JSON string |
 
 `workspace_roots[0]` is the ledger search root when `cwd` is absent.
-An empty workspace list stays silent.
+An empty workspace list is allowed without policy checks. Stop stays quiet
+without a ledger workspace.
 
 ## Worker provenance
 

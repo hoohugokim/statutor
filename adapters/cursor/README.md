@@ -7,26 +7,36 @@ Cursor hooks use a version-1 `hooks.json` file and JSON over stdin/stdout.
 
 The kernel first resolves the nearest `.statutor.yaml` marker and stays
 silent outside an opted-in ledger. Inside one, policy comes from HEAD.
-Requires `statutor` on `PATH` (`pipx install statutor` or `pip install -e .`)
-unless the project file below calls the kernel by path.
+Requires Statutor **0.7.5 or newer** on `PATH`. Check `statutor version` before
+enabling the hooks; earlier versions do not support Cursor hooks.
 
 ## Install once
 
-Copy [hooks.json](hooks.json) to `.cursor/hooks.json` in the ledger
-repository, or merge the four events into an existing file. Project hooks
-run from the repository root.
+Install or upgrade the CLI with `pipx install 'statutor>=0.7.5'` or
+`pipx upgrade statutor`. While 0.7.5 is still a candidate, install it from a
+local Statutor checkout with `pip install -e /absolute/path/to/statutor`.
+
+From your ledger repository, copy [hooks.json](hooks.json) from that
+Statutor checkout. Replace the absolute source path below with your own:
 
 ```sh
 mkdir -p .cursor
-cp adapters/cursor/hooks.json .cursor/hooks.json
+cp /absolute/path/to/statutor/adapters/cursor/hooks.json .cursor/hooks.json
 ```
 
-This Statutor repository already dogfoods `.cursor/hooks.json` against
-`core/statutor_core.py` so a checkout works without a global CLI.
+If `.cursor/hooks.json` already exists, merge the four events instead of
+replacing it. Project hooks run from the repository root. This Statutor
+repository already dogfoods `.cursor/hooks.json` against
+`core/statutor_core.py`, so this checkout works without a global CLI.
 
 Do not set `failClosed`. Hook crashes and missing CLI must fail open.
 Invalid JSON on exit 0 would block Cursor permission events, so the kernel
 always emits a permission object on a detected Cursor event.
+
+The Stop hook reports ledger drift through Cursor's native
+[`followup_message`](https://cursor.com/docs/hooks#stop). It requests at most
+one follow-up per completion chain; a repeated Stop, an aborted or failed
+run, and a clean ledger stay quiet.
 
 ## What the kernel treats as a mutation
 

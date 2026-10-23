@@ -133,16 +133,39 @@ def _codex_config_facts(
     return limit, disabled
 
 
+def _document_missing(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _load_documents(
     roots: substrate.ResolvedRoots,
     diagnostics: list[dict[str, object]],
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     config = None
     state = None
-    for label, path, validator in (
+    documents = (
         ("config", lifecycle._config_path(roots), substrate.validate_config),
         ("state", lifecycle._state_path(roots), substrate.validate_state),
-    ):
+    )
+    missing = {label for label, path, _ in documents if _document_missing(path)}
+    if len(missing) == len(documents):
+        _diagnostic(
+            diagnostics, "error", "global-not-initialized",
+            "global layer is not initialized; run `statutor global init`")
+        return None, None
+    for label, path, validator in documents:
+        if label in missing:
+            _diagnostic(
+                diagnostics, "error", f"global-{label}-missing",
+                f"global {label} is missing; run `statutor global init`",
+                path=path)
+            continue
         try:
             value = validator(substrate.load_json(path))
         except substrate.GlobalError as error:

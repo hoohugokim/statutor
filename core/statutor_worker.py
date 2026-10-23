@@ -1017,21 +1017,18 @@ def worker_complete(state_root: Path, cwd: str, *,
     project_id, derivation, display = _resolve_project(cwd)
     wt_root = _resolve_worktree(cwd)
     wt_id = _worktree_id(wt_root)
-    current_digest, current_handoff = read_handoff(ledger, cwd)
+    current_digest, handoff_text = _read_handoff_text(ledger, cwd)
     name = _handoff_filename(ledger)
     if current_digest is None:
         raise WorkerError(f"completion requires a {name} in the ledger")
-    current_id = current_handoff if current_handoff else "none"
-    ledger_path = Path(ledger) / name
-    try:
-        handoff_text = ledger_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise WorkerError(f"cannot read {name}: {exc}") from exc
+    if handoff_text is None:
+        raise WorkerError(f"cannot read {name} as UTF-8")
     shape_problems = validate_handoff_metadata(handoff_text)
     if shape_problems:
         raise WorkerError("HANDOFF attribution block is malformed: "
                           + "; ".join(shape_problems))
     handoff_fields = parse_handoff_fields(handoff_text)
+    current_id = handoff_fields.get("handoff_id") or "none"
     with _ProjectLock(_project_dir(state_root, project_id)):
         registry, expected = _load_or_init(state_root, project_id, derivation,
                                            display)
@@ -1046,6 +1043,11 @@ def worker_complete(state_root: Path, cwd: str, *,
         prior = completed_by_ledger.get(ledger)
         prior_id = str(prior.get("handoff_id", "none")) if isinstance(
             prior, dict) else "none"
+        if session["status"] == "completed":
+            raise WorkerError(
+                "session already completed; inspect the local completion with "
+                "`statutor worker show --basis completed`. Begin a new session "
+                "before completing further work")
         supersedes = handoff_fields.get("supersedes")
         names = {part.strip() for part in (supersedes or "").split(",")
                  if part.strip()} if supersedes else set()
@@ -1215,18 +1217,20 @@ def _emit(data: object, json_output: bool) -> None:
         print(json.dumps(data, sort_keys=True))
 
 
+def _root_arguments(parser, *, child: bool = False) -> None:
+    import argparse
+    for option in ("--home", "--config-root", "--state-root"):
+        parser.add_argument(option, default=argparse.SUPPRESS if child else None)
+
+
 def machine_cli(argv: list[str]) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="statutor machine")
-    parser.add_argument("--home")
-    parser.add_argument("--config-root")
-    parser.add_argument("--state-root")
+    _root_arguments(parser)
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("show", "set-label", "rotate"):
         child = sub.add_parser(name)
-        child.add_argument("--home")
-        child.add_argument("--config-root")
-        child.add_argument("--state-root")
+        _root_arguments(child, child=True)
         child.add_argument("--json", action="store_true")
         if name == "set-label":
             child.add_argument("label")
@@ -1267,14 +1271,10 @@ def worker_cli(argv: list[str]) -> int:
     # plan's "explicit confirmation" before rotation.
     import argparse
     parser = argparse.ArgumentParser(prog="statutor worker")
-    parser.add_argument("--home")
-    parser.add_argument("--config-root")
-    parser.add_argument("--state-root")
+    _root_arguments(parser)
     sub = parser.add_subparsers(dest="command", required=True)
     begin = sub.add_parser("begin")
-    begin.add_argument("--home")
-    begin.add_argument("--config-root")
-    begin.add_argument("--state-root")
+    _root_arguments(begin, child=True)
     begin.add_argument("--harness", required=True, choices=HARNESSES)
     begin.add_argument("--role", default="unknown", choices=ROLES)
     begin.add_argument("--origin-harness", default="unknown",
@@ -1283,24 +1283,18 @@ def worker_cli(argv: list[str]) -> int:
     begin.add_argument("--cwd")
     begin.add_argument("--json", action="store_true")
     show = sub.add_parser("show")
-    show.add_argument("--home")
-    show.add_argument("--config-root")
-    show.add_argument("--state-root")
+    _root_arguments(show, child=True)
     show.add_argument("--basis", default="completed", choices=BASES)
     show.add_argument("--worktree", action="store_true")
     show.add_argument("--cwd")
     show.add_argument("--json", action="store_true")
     active = sub.add_parser("active")
-    active.add_argument("--home")
-    active.add_argument("--config-root")
-    active.add_argument("--state-root")
+    _root_arguments(active, child=True)
     active.add_argument("--worktree", action="store_true")
     active.add_argument("--cwd")
     active.add_argument("--json", action="store_true")
     record = sub.add_parser("record")
-    record.add_argument("--home")
-    record.add_argument("--config-root")
-    record.add_argument("--state-root")
+    _root_arguments(record, child=True)
     record.add_argument("--harness", required=True, choices=HARNESSES)
     record.add_argument("--event", required=True, choices=EVENTS)
     record.add_argument("--role", default="unknown", choices=ROLES)
@@ -1310,27 +1304,22 @@ def worker_cli(argv: list[str]) -> int:
     record.add_argument("--cwd")
     record.add_argument("--json", action="store_true")
     complete = sub.add_parser("complete")
-    complete.add_argument("--home")
-    complete.add_argument("--config-root")
-    complete.add_argument("--state-root")
+    _root_arguments(complete, child=True)
     complete.add_argument("--session", required=True)
     complete.add_argument("--cwd")
     complete.add_argument("--json", action="store_true")
     compare = sub.add_parser("compare")
-    compare.add_argument("--home")
-    compare.add_argument("--config-root")
-    compare.add_argument("--state-root")
+    _root_arguments(compare, child=True)
     compare.add_argument("ref")
     compare.add_argument("--cwd")
     compare.add_argument("--json", action="store_true")
     capabilities = sub.add_parser("capabilities")
-    capabilities.add_argument("--home")
-    capabilities.add_argument("--config-root")
-    capabilities.add_argument("--state-root")
+    _root_arguments(capabilities, child=True)
     capabilities.add_argument("--json", action="store_true")
     new_id = sub.add_parser(
         "new-id",
         help="mint a fresh random handoff id for a HANDOFF rewrite")
+    _root_arguments(new_id, child=True)
     new_id.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     roots = _roots(args)

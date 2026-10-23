@@ -54,6 +54,10 @@ statutor worker complete --session SESSION_ID
 Completion validates the HANDOFF attribution and revision lineage. It refuses
 a stale or foreign session and detects a competing local completion. An active
 lease is a machine-local presence hint, not proof that useful work occurred.
+Retrying a completed session reports that it is already completed. Inspect
+the recorded result with `statutor worker show --basis completed --json`;
+begin a new session for further work. A competing completion after your
+session's baseline still requires reconciliation.
 The registry retains at most 50 sessions per project and 20 leases per
 worktree. Durable completion history lives in HANDOFF revisions committed to Git.
 

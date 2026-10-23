@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -91,6 +92,8 @@ def _run() -> int:
         return 0
     if event.get("status") in ("aborted", "error"):
         return 0
+    if is_cursor and event.get("loop_count", 0) != 0:
+        return 0
 
     workspace_paths = event.get("workspacePaths", [])
     if not isinstance(workspace_paths, list):
@@ -132,15 +135,16 @@ def _run() -> int:
     ]
 
     state_filename = _state_filename(project_dir)
-    sentinel_prefix = f"WARN  {state_filename} last verified"
+    sentinel_prefixes = (f"WARN  {state_filename} last verified",
+                         f"WARN  {state_filename} is not yet verified")
     handoff_stamp_present = os.path.isfile(os.path.join(project_dir, state_filename))
     if (handoff_stamp_present and len(findings) == 1
-            and findings[0].startswith(sentinel_prefix)):
+            and findings[0].startswith(sentinel_prefixes)):
         try:
             handoff_text = open(os.path.join(project_dir, state_filename), encoding="utf-8").read()
         except Exception:
             handoff_text = ""
-        if f"last_verified: {_SENTINEL_DATE}" in handoff_text:
+        if re.search(r"(?m)^last_verified:\s*" + _SENTINEL_DATE + r"(?:\s|$)", handoff_text):
             findings = []  # untouched scaffold: init-state noise, not drift
 
     if not findings:
@@ -149,7 +153,11 @@ def _run() -> int:
         return 0  # clean ledger (or only-sentinel scaffold): completely silent
 
     report = "\n".join(findings)
-    if is_antigravity:
+    if is_cursor:
+        print(json.dumps({
+            "followup_message": f"statutor-doctor found drift in the ledger:\n{report}",
+        }))
+    elif is_antigravity:
         print(json.dumps({
             "decision": "continue",
             "reason": f"statutor-doctor found drift in the ledger:\n{report}",

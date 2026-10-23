@@ -1047,7 +1047,7 @@ def _stop_reason_is_session_end(event: dict) -> bool:
     return isinstance(reason, str) and reason != "end_turn"
 
 
-def _run_stop_event(event: dict, is_antigravity: bool) -> int:
+def _run_stop_event(event: dict, is_antigravity: bool, *, is_cursor: bool = False) -> int:
     try:
         if _stop_reason_is_session_end(event):
             return 0
@@ -1078,14 +1078,15 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
 
         state_filename = overwrite_bounded_filename(project_dir)
 
-        sentinel_prefix = f"WARN  {state_filename} last verified"
+        sentinel_prefixes = (f"WARN  {state_filename} last verified",
+                             f"WARN  {state_filename} is not yet verified")
         handoff_path = os.path.join(project_dir, state_filename)
-        if os.path.isfile(handoff_path) and len(findings) == 1 and findings[0].startswith(sentinel_prefix):
+        if os.path.isfile(handoff_path) and len(findings) == 1 and findings[0].startswith(sentinel_prefixes):
             try:
                 handoff_text = open(handoff_path, encoding="utf-8").read()
             except Exception:
                 handoff_text = ""
-            if "last_verified: 1970-01-01" in handoff_text:
+            if re.search(r"(?m)^last_verified:\s*1970-01-01(?:\s|$)", handoff_text):
                 findings = []
 
         if not findings:
@@ -1094,7 +1095,11 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
             return 0
 
         report = "\n".join(findings)
-        if is_antigravity:
+        if is_cursor:
+            print(json.dumps({
+                "followup_message": f"statutor-doctor found drift in the ledger:\n{report}",
+            }))
+        elif is_antigravity:
             print(json.dumps({
                 "decision": "continue",
                 "reason": f"statutor-doctor found drift in the ledger:\n{report}",
@@ -1164,11 +1169,10 @@ def _run_cursor_event(event: dict, stop_mode: bool) -> int:
         name = event.get("hook_event_name")
         if stop_mode or name == "stop":
             if event.get("status") in ("aborted", "error"):
-                return _cursor_permission("allow")
-            if not cwd:
-                return _cursor_permission("allow")
-            # Reuse Stop doctor; Cursor accepts the Claude nested shape.
-            return _run_stop_event({**event, "cwd": cwd, "stop_hook_active": False}, False)
+                return 0
+            if not cwd or event.get("loop_count", 0) != 0:
+                return 0
+            return _run_stop_event({**event, "cwd": cwd}, False, is_cursor=True)
         if not cwd:
             return _cursor_permission("allow")
         if name == "beforeShellExecution":
@@ -1294,13 +1298,26 @@ def run_hook(argv: list[str] | None = None) -> int:
 # --------------------------------------------------------------------------
 
 def run_check(argv: list[str]) -> int:
+    usage = "usage: statutor check [--if-ledger] TOOL JSON [CWD]"
     if_ledger = bool(argv and argv[0] == "--if-ledger")
     if if_ledger:
         argv = argv[1:]
-    if len(argv) < 2:
-        print("usage: statutor check [--if-ledger] TOOL JSON [CWD]", file=sys.stderr)
+    if argv in (["--help"], ["-h"]):
+        print(usage)
+        return 0
+    if len(argv) not in (2, 3):
+        print(usage, file=sys.stderr)
         return 64
-    tool, payload = argv[0], json.loads(argv[1])
+    try:
+        payload = json.loads(argv[1])
+    except json.JSONDecodeError as exc:
+        print(f"statutor check: expected a JSON object; {exc.msg} "
+              f"(line {exc.lineno}, column {exc.colno}).", file=sys.stderr)
+        return 64
+    if not isinstance(payload, dict):
+        print("statutor check: expected a JSON object.", file=sys.stderr)
+        return 64
+    tool = argv[0]
     cwd = argv[2] if len(argv) > 2 else os.getcwd()
     try:
         if if_ledger:
@@ -1707,6 +1724,10 @@ def run_staged(cwd: str) -> int:
 
 def run_trust_approve(argv: list[str]) -> int:
     """Create the exact-tree local authorization receipt from D-0015."""
+    if argv in (["--help"], ["-h"]):
+        print("usage: statutor trust approve --decision D-NNNN --reason TEXT "
+              "[--confirm-tree OID] [CWD]")
+        return 0
     cwd = os.getcwd()
     decision = None
     reason = None
@@ -2111,6 +2132,12 @@ def main() -> None:
     if mode == "check":
         sys.exit(run_check(argv[1:]))
     if mode in ("staged", "--staged"):
+        if argv[1:] in (["--help"], ["-h"]):
+            print("usage: statutor staged [CWD]")
+            sys.exit(0)
+        if len(argv) > 2:
+            print("usage: statutor staged [CWD]", file=sys.stderr)
+            sys.exit(64)
         sys.exit(run_staged(argv[1] if len(argv) > 1 else os.getcwd()))
     if mode == "trust" and len(argv) > 1 and argv[1] == "approve":
         sys.exit(run_trust_approve(argv[2:]))
@@ -2125,7 +2152,8 @@ def main() -> None:
     if mode == "worker":
         import statutor_worker
         sys.exit(statutor_worker.worker_cli(argv[1:]))
-    print(__doc__)
+    print(f"unknown command: {mode}; run `statutor --help` for commands.",
+          file=sys.stderr)
     sys.exit(64)
 
 

@@ -27,9 +27,10 @@ statutor worker record --harness codex --event attempt --session SESSION_ID
 ```
 
 Use `statutor worker capabilities --json` to inspect declared evidence and
-verification baselines for each agent. Automatic agent integrations cannot
-record `--event mutation`; only a human or a custom integration with actual
-post-success evidence may do so. An `unknown` agent proves activity only.
+verification baselines for each agent. Automatic agent integrations
+(`claude`, `codex`, `opencode`, `antigravity`, `gemini`, `grok`, `cursor`)
+cannot record `--event mutation`; only a human or a custom integration with
+actual post-success evidence may do so. An `unknown` agent proves activity only.
 Roles and origin agents stay `unknown` unless explicitly proved.
 
 ## Complete the handoff
@@ -53,6 +54,10 @@ statutor worker complete --session SESSION_ID
 Completion validates the HANDOFF attribution and revision lineage. It refuses
 a stale or foreign session and detects a competing local completion. An active
 lease is a machine-local presence hint, not proof that useful work occurred.
+Retrying a completed session reports that it is already completed. Inspect
+the recorded result with `statutor worker show --basis completed --json`;
+begin a new session for further work. A competing completion after your
+session's baseline still requires reconciliation.
 The registry retains at most 50 sessions per project and 20 leases per
 worktree. Durable completion history lives in HANDOFF revisions committed to Git.
 

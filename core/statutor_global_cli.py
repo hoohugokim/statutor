@@ -694,7 +694,10 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "skill":
         import statutor_skills
         return statutor_skills.main(argv[1:])
-    parser = argparse.ArgumentParser(prog="statutor global")
+    parser = argparse.ArgumentParser(
+        prog="statutor global",
+        epilog="Manage reusable skills with: statutor global skill --help",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     for name in ("init", "plan", "apply", "status", "doctor", "uninstall"):
         child = subparsers.add_parser(name)

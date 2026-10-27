@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -43,22 +44,15 @@ _SENTINEL_DATE = "1970-01-01"
 
 
 def _state_filename(project_dir: str) -> str:
-    """Policy-derived name of the overwrite_bounded file (basename-only
-    patterns, matching statutor_doctor's `_rule_filename`); conventional
+    """Policy-derived name of the overwrite_bounded file; conventional
     fallback on any resolution failure (fail-open)."""
     try:
         if CORE_DIR not in sys.path:
             sys.path.insert(0, CORE_DIR)
         import statutor_core
-
-        for rule in statutor_core.load_worktree_policy(project_dir).get("governed", []):
-            pattern = rule.get("pattern", "")
-            if (rule.get("policy") == "overwrite_bounded" and pattern
-                    and "*" not in pattern and "/" not in pattern):
-                return pattern
+        return statutor_core.overwrite_bounded_filename(project_dir)
     except Exception:
-        pass
-    return "HANDOFF.md"
+        return "HANDOFF.md"
 
 
 def _find_ledger_root(start: str) -> str | None:
@@ -84,6 +78,8 @@ def _run() -> int:
 
     is_antigravity = ("executionNum" in event or "workspacePaths" in event
                       or "terminationReason" in event)
+    is_cursor = event.get("hook_event_name") in (
+        "stop", "preToolUse", "beforeShellExecution", "beforeMCPExecution")
 
     reason = event.get("reason")
     if isinstance(reason, str) and reason != "end_turn":
@@ -94,9 +90,29 @@ def _run() -> int:
         if is_antigravity:
             print(json.dumps({"decision": "allow"}))
         return 0
+    if event.get("status") in ("aborted", "error"):
+        return 0
+    if is_cursor and event.get("loop_count", 0) != 0:
+        return 0
 
     workspace_paths = event.get("workspacePaths", [])
-    cwd = event.get("cwd") or (workspace_paths[0] if workspace_paths else os.getcwd())
+    if not isinstance(workspace_paths, list):
+        workspace_paths = []
+    cursor_roots = event.get("workspace_roots") or []
+    if not isinstance(cursor_roots, list):
+        cursor_roots = []
+    cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
+    if is_antigravity:
+        cwd = cwd or (workspace_paths[0] if workspace_paths else None)
+        if not cwd:
+            print(json.dumps({"decision": "allow"}))
+            return 0
+    elif is_cursor:
+        cwd = cwd or (cursor_roots[0] if cursor_roots else None)
+        if not cwd:
+            return 0
+    else:
+        cwd = cwd or (workspace_paths[0] if workspace_paths else os.getcwd())
     project_dir = _find_ledger_root(cwd)
     if project_dir is None:
         if is_antigravity:
@@ -119,15 +135,16 @@ def _run() -> int:
     ]
 
     state_filename = _state_filename(project_dir)
-    sentinel_prefix = f"WARN  {state_filename} last verified"
+    sentinel_prefixes = (f"WARN  {state_filename} last verified",
+                         f"WARN  {state_filename} is not yet verified")
     handoff_stamp_present = os.path.isfile(os.path.join(project_dir, state_filename))
     if (handoff_stamp_present and len(findings) == 1
-            and findings[0].startswith(sentinel_prefix)):
+            and findings[0].startswith(sentinel_prefixes)):
         try:
             handoff_text = open(os.path.join(project_dir, state_filename), encoding="utf-8").read()
         except Exception:
             handoff_text = ""
-        if f"last_verified: {_SENTINEL_DATE}" in handoff_text:
+        if re.search(r"(?m)^last_verified:\s*" + _SENTINEL_DATE + r"(?:\s|$)", handoff_text):
             findings = []  # untouched scaffold: init-state noise, not drift
 
     if not findings:
@@ -136,7 +153,11 @@ def _run() -> int:
         return 0  # clean ledger (or only-sentinel scaffold): completely silent
 
     report = "\n".join(findings)
-    if is_antigravity:
+    if is_cursor:
+        print(json.dumps({
+            "followup_message": f"statutor-doctor found drift in the ledger:\n{report}",
+        }))
+    elif is_antigravity:
         print(json.dumps({
             "decision": "continue",
             "reason": f"statutor-doctor found drift in the ledger:\n{report}",

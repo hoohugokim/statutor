@@ -29,7 +29,7 @@ Or, with no plugin, one user hook file `~/.grok/hooks/statutor.json`:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|StrReplace|Shell)$",
+        "matcher": "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|run_terminal_cmd|StrReplace|Shell|MultiEdit|NotebookEdit|Delete)$",
         "hooks": [
           { "type": "command", "command": "statutor hook", "timeout": 30 }
         ]
@@ -51,7 +51,7 @@ that same layer, not beside it):
 
 ```toml
 [[hooks.PreToolUse]]
-matcher = "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|StrReplace|Shell)$"
+matcher = "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|run_terminal_cmd|StrReplace|Shell|MultiEdit|NotebookEdit|Delete)$"
 hooks = [
   { type = "command", command = "statutor hook", timeout = 30 },
 ]

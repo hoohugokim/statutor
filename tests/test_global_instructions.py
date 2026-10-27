@@ -31,6 +31,20 @@ def _roots(tmp_path: Path) -> substrate.ResolvedRoots:
     )
 
 
+def test_global_help_exposes_delegated_skills(capsys) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        lifecycle.main(["--help"])
+    assert stopped.value.code == 0
+    assert "statutor global skill --help" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as stopped:
+        lifecycle.main(["skill", "--help"])
+    assert stopped.value.code == 0
+    output = capsys.readouterr().out
+    assert "statutor global skill" in output
+    assert "import" in output and "uninstall" in output
+
+
 def test_init_only_scaffolds_statutor_sources_and_is_idempotent(tmp_path: Path) -> None:
     roots = _roots(tmp_path)
     assert all(item["action"] == "write" for item in lifecycle.init_plan(roots)["actions"])

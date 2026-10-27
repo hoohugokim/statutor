@@ -10,6 +10,7 @@ test_kernel.py's guards.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -551,6 +552,38 @@ def s60_tmp_swap_onto_policy_denied(root: Path) -> None:
     git(root, "add", ".statutor.yaml", "evil.tmp")
     git(root, "commit", "-q", "-m", "roots")
     git(root, "mv", "-f", "evil.tmp", ".statutor.yaml")
+
+
+def s61_receipt_omitting_null_optional_oids_authorizes(root: Path) -> None:
+    """Python dict.get treats a missing optional OID key as None. The Rust
+    twin must too: a receipt that omits JSON-null optional keys still
+    authorizes when those expected values are None."""
+    base_ledger(root)
+    (root / ".statutor.yaml").write_text(TRUST_POLICY, encoding="utf-8")
+    git(root, "add", ".statutor.yaml")
+    git(root, "commit", "-q", "-m", "policy")
+    git(root, "rm", "-q", ".statutor.yaml")
+    tree = subprocess.run(
+        ["git", "write-tree"], cwd=root, env=GIT_ENV, capture_output=True,
+        text=True, check=True).stdout.strip()
+    kernel = REPO_ROOT / "core" / "statutor_core.py"
+    subprocess.run(
+        [__import__("sys").executable, str(kernel), "trust", "approve", str(root),
+         "--decision", "D-0015", "--reason", "conformance fixture",
+         "--confirm-tree", tree],
+        cwd=root, env=GIT_ENV, capture_output=True, text=True, check=True)
+    raw = subprocess.run(
+        ["git", "rev-parse", "--git-path", "statutor/trust-receipt.json"],
+        cwd=root, env=GIT_ENV, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    path = Path(raw) if os.path.isabs(raw) else root / raw
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("head_oid", "baseline_policy_oid", "candidate_policy_oid"):
+        if receipt.get(key) is None:
+            receipt.pop(key, None)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    os.chmod(path, 0o600)
 
 
 SCENARIOS = {

@@ -453,13 +453,92 @@ fn parse_policy(text: &str) -> Result<Policy, ()> {
 
 /// First rule whose pattern matches the rel path or its basename —
 /// statutor_core._match_rule semantics, including backslash normalization.
-pub fn match_rule<'a>(rel_path: &str, policy: &'a Policy) -> Option<&'a Rule> {
+///
+/// When `root` is set, a case-variant path matches only if it is the same
+/// directory entry as a spelling the pattern already accepts. Patterns
+/// themselves stay case-sensitive.
+pub fn match_rule<'a>(
+    rel_path: &str,
+    policy: &'a Policy,
+    root: Option<&Path>,
+) -> Option<&'a Rule> {
     let rel = rel_path.replace(std::path::MAIN_SEPARATOR, "/");
+    if let Some(rule) = match_rule_text(&rel, policy) {
+        return Some(rule);
+    }
+    let root = root?;
+    let stored = stored_rel_path(root, &rel)?;
+    if stored == rel {
+        return None;
+    }
+    match_rule_text(&stored, policy)
+}
+
+fn match_rule_text<'a>(rel: &str, policy: &'a Policy) -> Option<&'a Rule> {
     let base = rel.rsplit('/').next().unwrap_or("");
     policy
         .governed
         .iter()
-        .find(|r| fnmatch(&r.pattern, &rel) || fnmatch(&r.pattern, base))
+        .find(|r| fnmatch(&r.pattern, rel) || fnmatch(&r.pattern, base))
+}
+
+fn same_file(left: &Path, right: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(left) = std::fs::metadata(left) else {
+            return false;
+        };
+        let Ok(right) = std::fs::metadata(right) else {
+            return false;
+        };
+        return left.dev() == right.dev() && left.ino() == right.ino();
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let Ok(left) = std::fs::metadata(left) else {
+            return false;
+        };
+        let Ok(right) = std::fs::metadata(right) else {
+            return false;
+        };
+        return left.volume_serial_number() == right.volume_serial_number()
+            && left.file_index() == right.file_index();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (left, right);
+        false
+    }
+}
+
+fn stored_rel_path(root: &Path, rel_path: &str) -> Option<String> {
+    if rel_path.starts_with('/') || rel_path.contains('\0') {
+        return None;
+    }
+    let absolute = root.join(rel_path);
+    if !absolute.exists() {
+        return None;
+    }
+    let parent = absolute.parent()?;
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if same_file(&entry.path(), &absolute) {
+            matches.push(name);
+            if matches.len() > 1 {
+                return None;
+            }
+        }
+    }
+    let stored = matches.pop()?;
+    match rel_path.rsplit_once('/') {
+        Some((parent_rel, _)) if !parent_rel.is_empty() => Some(format!("{parent_rel}/{stored}")),
+        _ => Some(stored),
+    }
 }
 
 /// Python `fnmatch.fnmatch` (case-sensitive, POSIX) subset: `*`, `?`,
@@ -937,7 +1016,10 @@ fn yaml_string<'a>(map: &'a yaml_rust2::yaml::Hash, key: &str) -> Option<&'a str
 }
 
 fn yaml_optional_string(map: &yaml_rust2::yaml::Hash, key: &str) -> Result<Option<String>, ()> {
-    let value = map.get(&yaml_rust2::Yaml::from_str(key)).ok_or(())?;
+    // Match Python dict.get: a missing key is None, not a parse failure.
+    let Some(value) = map.get(&yaml_rust2::Yaml::from_str(key)) else {
+        return Ok(None);
+    };
     if value.is_null() {
         Ok(None)
     } else {
@@ -1125,8 +1207,8 @@ fn staged_violations(cwd: &Path, policy: &Policy) -> Result<Vec<String>, String>
     // Pass 1 — governed-record lifecycle and frozen transitions.
     for change in &changes {
         let code = change.status.as_bytes()[0] as char;
-        let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
-        let new_rule = change.new.as_deref().and_then(|p| match_rule(p, policy));
+        let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy, Some(cwd)));
+        let new_rule = change.new.as_deref().and_then(|p| match_rule(p, policy, Some(cwd)));
         let old_kind = old_rule.map(|r| r.policy.as_str()).unwrap_or("");
         let new_kind = new_rule.map(|r| r.policy.as_str()).unwrap_or("");
 
@@ -1169,13 +1251,13 @@ fn staged_violations(cwd: &Path, policy: &Policy) -> Result<Vec<String>, String>
         let Some(path) = change.new.as_deref() else {
             continue;
         };
-        let Some(rule) = match_rule(path, policy) else {
+        let Some(rule) = match_rule(path, policy, Some(cwd)) else {
             continue;
         };
         let code = change.status.as_bytes()[0] as char;
         match rule.policy.as_str() {
             "append_only" => {
-                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
+                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy, Some(cwd)));
                 let same_rule = matches!(old_rule, Some(old) if std::ptr::eq(old, rule));
                 let baseline = if matches!(code, 'M' | 'T') || (code == 'R' && same_rule) {
                     let old = change.old.as_deref().unwrap_or("");
@@ -1218,7 +1300,7 @@ or reorders existing lines. Append superseding records instead."
                         continue;
                     }
                 };
-                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy));
+                let old_rule = change.old.as_deref().and_then(|p| match_rule(p, policy, Some(cwd)));
                 let same_rule = matches!(old_rule, Some(old) if std::ptr::eq(old, rule));
                 let baseline = if matches!(code, 'M' | 'T') || (code == 'R' && same_rule) {
                     let old = change.old.as_deref().unwrap_or("");
@@ -1353,16 +1435,16 @@ mod tests {
     fn default_policy_governs_expected_paths() {
         let p = default_policy();
         assert_eq!(
-            match_rule("docs/DECISIONS.md", &p).unwrap().policy,
+            match_rule("docs/DECISIONS.md", &p, None).unwrap().policy,
             "append_only"
         );
         assert_eq!(
-            match_rule("plans/archive/x.md", &p).unwrap().policy,
+            match_rule("plans/archive/x.md", &p, None).unwrap().policy,
             "frozen"
         );
-        assert!(match_rule("src/main.rs", &p).is_none());
+        assert!(match_rule("src/main.rs", &p, None).is_none());
         assert_eq!(
-            match_rule("plans\\archive\\win.md", &p).is_some(),
+            match_rule("plans\\archive\\win.md", &p, None).is_some(),
             cfg!(windows)
         );
     }
@@ -1405,5 +1487,52 @@ mod tests {
         assert!(state_reason("TASKS.md", reused, Some(baseline))
             .unwrap()
             .contains("greater than existing maximum"));
+    }
+
+    #[test]
+    fn match_rule_case_variant_follows_directory_entry() {
+        if let Ok(spec) = std::env::var("STATUTOR_MATCH_CASES") {
+            let text = std::fs::read_to_string(&spec).expect("match cases");
+            let mut lines = text.lines();
+            let root = PathBuf::from(lines.next().expect("root"));
+            let policy = default_policy();
+            for rel in lines.filter(|line| !line.is_empty()) {
+                let got = match_rule(rel, &policy, Some(&root))
+                    .map(|rule| rule.policy.clone())
+                    .unwrap_or_else(|| "none".to_string());
+                println!("STATUTOR_MATCH {rel} {got}");
+            }
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("statutor-match-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), b"short\n").unwrap();
+        let policy = default_policy();
+        let variant = dir.join("agents.md");
+        let canonical = dir.join("AGENTS.md");
+        if super::same_file(&variant, &canonical) {
+            assert_eq!(
+                match_rule("agents.md", &policy, Some(&dir)).unwrap().policy,
+                "constitution"
+            );
+        } else {
+            assert!(match_rule("agents.md", &policy, Some(&dir)).is_none());
+            std::fs::write(&variant, b"other\n").unwrap();
+            assert!(match_rule("agents.md", &policy, Some(&dir)).is_none());
+            assert_eq!(
+                match_rule("AGENTS.md", &policy, Some(&dir)).unwrap().policy,
+                "constitution"
+            );
+        }
+        std::fs::create_dir_all(dir.join("notes")).unwrap();
+        std::fs::write(dir.join("notes").join("agents.md"), b"nope\n").unwrap();
+        assert!(match_rule("notes/agents.md", &policy, Some(&dir)).is_none());
+        assert_eq!(
+            match_rule("AGENTS.md", &policy, Some(&dir)).unwrap().policy,
+            "constitution"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

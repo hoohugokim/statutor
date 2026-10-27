@@ -229,6 +229,91 @@ def test_match_rule_outside_cwd_still_governed_quirk():
     assert rule["policy"] == "append_only"
 
 
+def test_case_variant_same_directory_entry_is_governed(tmp_path):
+    """On a case-insensitive volume, agents.md is the AGENTS.md entry."""
+    canonical = tmp_path / "AGENTS.md"
+    canonical.write_text("short\n", encoding="utf-8")
+    variant = tmp_path / "agents.md"
+    if not (variant.exists() and os.path.samefile(canonical, variant)):
+        pytest.skip("this volume keeps agents.md and AGENTS.md as different files")
+    reason = statutor_core.validate(
+        "write", {"file_path": str(variant), "content": lines(300)},
+        str(tmp_path), POLICY)
+    assert reason is not None
+    assert "300" in reason
+    assert "hard cap" in reason
+    deleted = statutor_core.validate(
+        "delete", {"file_path": str(variant)}, str(tmp_path), POLICY)
+    assert deleted is not None
+    assert "delete is denied" in deleted
+
+
+def _case_distinct_root(tmp_path: Path) -> tuple[Path, callable]:
+    """A directory where agents.md and AGENTS.md are different entries."""
+    probe = tmp_path / "fold-probe"
+    probe.mkdir()
+    (probe / "AGENTS.md").write_text("A\n", encoding="utf-8")
+    variant = probe / "agents.md"
+    if not (variant.exists() and os.path.samefile(probe / "AGENTS.md", variant)):
+        return tmp_path, lambda: None
+    image = tmp_path / "cs.sparseimage"
+    mount = tmp_path / "cs-mnt"
+    mount.mkdir()
+    create = subprocess.run(
+        ["hdiutil", "create", "-size", "20m", "-type", "SPARSE",
+         "-fs", "Case-sensitive APFS", "-volname", "stcs", str(image)],
+        capture_output=True, text=True)
+    if create.returncode != 0:
+        pytest.skip(f"case-sensitive volume unavailable: {create.stderr}")
+    attach = subprocess.run(
+        ["hdiutil", "attach", str(image), "-mountpoint", str(mount), "-nobrowse"],
+        capture_output=True, text=True)
+    if attach.returncode != 0:
+        pytest.skip(f"case-sensitive attach failed: {attach.stderr}")
+
+    def cleanup() -> None:
+        subprocess.run(["hdiutil", "detach", str(mount)], capture_output=True)
+
+    return mount, cleanup
+
+
+def test_case_variant_distinct_files_do_not_share_a_rule(tmp_path):
+    root, cleanup = _case_distinct_root(tmp_path)
+    try:
+        (root / "AGENTS.md").write_text("governed\n", encoding="utf-8")
+        (root / "agents.md").write_text("other\n", encoding="utf-8")
+        assert not os.path.samefile(root / "AGENTS.md", root / "agents.md")
+        assert statutor_core._match_rule("agents.md", POLICY, root=str(root)) is None
+        assert statutor_core._match_rule(
+            "AGENTS.md", POLICY, root=str(root))["policy"] == "constitution"
+        assert statutor_core.validate(
+            "write", {"file_path": str(root / "agents.md"), "content": lines(300)},
+            str(root), POLICY) is None
+        denied = statutor_core.validate(
+            "write", {"file_path": str(root / "AGENTS.md"), "content": lines(300)},
+            str(root), POLICY)
+        assert denied is not None
+        assert "hard cap" in denied
+    finally:
+        cleanup()
+
+
+def test_case_variant_other_directory_entry_is_not_governed(tmp_path):
+    canonical = tmp_path / "AGENTS.md"
+    canonical.write_text("short\n", encoding="utf-8")
+    other = tmp_path / "notes" / "agents.md"
+    other.parent.mkdir()
+    other.write_text("notes\n", encoding="utf-8")
+    assert not os.path.samefile(canonical, other)
+    assert statutor_core.validate(
+        "write", {"file_path": str(other), "content": lines(300)},
+        str(tmp_path), POLICY) is None
+    assert statutor_core._match_rule(
+        "notes/agents.md", POLICY, root=str(tmp_path)) is None
+    assert statutor_core._match_rule(
+        "AGENTS.md", POLICY, root=str(tmp_path))["policy"] == "constitution"
+
+
 # --------------------------------------------------------------------------
 # load_policy (K-13..K-22)
 # --------------------------------------------------------------------------
@@ -296,6 +381,23 @@ def test_load_policy_malformed_committed_policy_is_error(tmp_path):
         statutor_core.load_policy(str(tmp_path))
 
 
+@git_required
+def test_hook_denies_malformed_committed_policy(tmp_path):
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".statutor.yaml").write_text("::: not yaml [\n", encoding="utf-8")
+    commit_all(tmp_path, "bad policy")
+    result = run_kernel(["hook"], input_str=json.dumps({
+        "tool_name": "Write",
+        "tool_input": {"file_path": "notes/x.md", "content": "x"},
+        "cwd": str(tmp_path),
+    }))
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    reason = data["hookSpecificOutput"]["permissionDecisionReason"]
+    assert data["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "committed policy invalid" in reason
+
+
 def test_load_policy_empty_governed_list_honored(tmp_path):
     git(tmp_path, "init", "-q", "-b", "main")
     (tmp_path / ".statutor.yaml").write_text("governed: []\n", encoding="utf-8")
@@ -331,11 +433,65 @@ def test_validate_non_mutating_tools_pass(tmp_path, tool):
 
 @pytest.mark.parametrize("tool,file_path", [
     ("multiedit", "DECISIONS.md"), ("notebookedit", "DECISIONS.md"),
-    ("multiedit", "plans/archive/x.md"), ("notebookedit", "plans/archive/x.md"),
+    ("MultiEdit", "plans/archive/x.md"), ("NotebookEdit", "plans/archive/x.md"),
 ])
-def test_validate_multiedit_notebookedit_uncovered_quirk(tmp_path, tool, file_path):
+def test_validate_multiedit_notebookedit_deny_unproved_governed(tmp_path, tool, file_path):
     payload = {"file_path": str(tmp_path / file_path)}
-    assert statutor_core.validate(tool, payload, str(tmp_path), POLICY) is None
+    reason = statutor_core.validate(tool, payload, str(tmp_path), POLICY)
+    assert reason is not None
+    assert "cannot be proved safe" in reason
+
+
+def test_validate_multiedit_ungoverned_path_stays_silent(tmp_path):
+    payload = {"file_path": str(tmp_path / "notes" / "scratch.md")}
+    assert statutor_core.validate("multiedit", payload, str(tmp_path), POLICY) is None
+
+
+def _whole_file_denial(reason: str) -> None:
+    assert reason is not None
+    assert "cannot be proved safe" in reason
+    assert "write" in reason
+    assert "complete file" in reason
+    assert "old_string" not in reason
+
+
+@pytest.mark.parametrize("tool", ["MultiEdit", "NotebookEdit"])
+def test_whole_file_edits_deny_governed_paths_with_or_without_old_string(tmp_path, tool):
+    """MultiEdit and NotebookEdit stay denied once the path is governed."""
+    target = tmp_path / "DECISIONS.md"
+    target.write_text("# DECISIONS\n\nkept\n", encoding="utf-8")
+    edits = {"file_path": str(target), "edits": [
+        {"old_string": "kept", "new_string": "gone"}]}
+    _whole_file_denial(statutor_core.validate(tool, edits, str(tmp_path), POLICY))
+    with_old = {**edits, "old_string": "kept", "new_string": "gone"}
+    _whole_file_denial(statutor_core.validate(tool, with_old, str(tmp_path), POLICY))
+    silent = {"file_path": str(tmp_path / "notes" / "scratch.md"),
+              "old_string": "kept", "edits": [{"old_string": "kept", "new_string": "gone"}]}
+    assert statutor_core.validate(tool, silent, str(tmp_path), POLICY) is None
+
+
+def test_proved_edit_aliases_and_empty_claude_edit_stay_put(tmp_path):
+    target = tmp_path / "DECISIONS.md"
+    target.write_text("kept\n", encoding="utf-8")
+    path = str(target)
+    for tool in ("search_replace", "strreplace", "hashline_edit"):
+        missing = statutor_core.validate(
+            tool, {"file_path": path, "new_string": "x"}, str(tmp_path), POLICY)
+        assert missing is not None
+        assert "old_string" in missing
+        allowed = statutor_core.validate(
+            tool, {"file_path": path, "old_string": "kept", "new_string": "kept\nmore"},
+            str(tmp_path), POLICY)
+        assert allowed is None
+        denied = statutor_core.validate(
+            tool, {"file_path": path, "old_string": "kept", "new_string": "gone"},
+            str(tmp_path), POLICY)
+        assert denied is not None
+        assert "append-only" in denied
+    empty = statutor_core.validate(
+        "Edit", {"file_path": path, "old_string": "", "new_string": "x"},
+        str(tmp_path), POLICY)
+    assert empty is None
 
 
 @pytest.mark.parametrize("tool", ["write", "edit"])
@@ -593,16 +749,28 @@ def test_append_only_write_missing_file_treated_as_empty(tmp_path):
     assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
 
 
-def test_append_only_write_whitespace_only_existing_ok(tmp_path):
+def test_append_only_write_whitespace_lines_must_survive(tmp_path):
     (tmp_path / "DECISIONS.md").write_text("   \n\n", encoding="utf-8")
-    payload = {"file_path": str(tmp_path / "DECISIONS.md"), "content": "unrelated\n"}
-    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
+    path = str(tmp_path / "DECISIONS.md")
+    replaced = statutor_core.validate(
+        "write", {"file_path": path, "content": "unrelated\n"}, str(tmp_path), POLICY)
+    assert replaced is not None
+    assert "append-only" in replaced
+    kept = statutor_core.validate(
+        "write", {"file_path": path, "content": "   \n\nmore\n"}, str(tmp_path), POLICY)
+    assert kept is None
 
 
-def test_append_only_write_strip_based_containment_quirk(tmp_path):
+def test_append_only_write_trailing_newline_is_part_of_the_line(tmp_path):
     (tmp_path / "DECISIONS.md").write_text("abc\n", encoding="utf-8")
-    payload = {"file_path": str(tmp_path / "DECISIONS.md"), "content": "abc"}
-    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
+    path = str(tmp_path / "DECISIONS.md")
+    dropped = statutor_core.validate(
+        "write", {"file_path": path, "content": "abc"}, str(tmp_path), POLICY)
+    assert dropped is not None
+    assert "append-only" in dropped
+    kept = statutor_core.validate(
+        "write", {"file_path": path, "content": "abc\nmore\n"}, str(tmp_path), POLICY)
+    assert kept is None
 
 
 def test_append_only_write_directory_path_raises_quirk(tmp_path):
@@ -611,6 +779,60 @@ def test_append_only_write_directory_path_raises_quirk(tmp_path):
     payload = {"file_path": str(directory), "content": "x"}
     with pytest.raises(IsADirectoryError):
         statutor_core.validate("write", payload, str(tmp_path), POLICY)
+
+
+def test_append_only_write_middle_insertion_allowed(tmp_path):
+    (tmp_path / "DECISIONS.md").write_text("line1\nline2\n", encoding="utf-8")
+    payload = {"file_path": str(tmp_path / "DECISIONS.md"),
+               "content": "line1\ninserted\nline2\n"}
+    assert statutor_core.validate("write", payload, str(tmp_path), POLICY) is None
+
+
+def test_append_only_write_reorder_or_drop_denied(tmp_path):
+    (tmp_path / "DECISIONS.md").write_text("line1\nline2\n", encoding="utf-8")
+    path = str(tmp_path / "DECISIONS.md")
+    reordered = statutor_core.validate(
+        "write", {"file_path": path, "content": "line2\nline1\n"}, str(tmp_path), POLICY)
+    assert reordered is not None
+    assert "append-only" in reordered
+    dropped = statutor_core.validate(
+        "write", {"file_path": path, "content": "line1\n"}, str(tmp_path), POLICY)
+    assert dropped is not None
+    assert "append-only" in dropped
+
+
+def test_invalid_utf8_governed_write_denies_instead_of_raising(tmp_path):
+    (tmp_path / "DECISIONS.md").write_bytes(b"# D\n\xff\n")
+    reason = statutor_core.validate(
+        "write", {"file_path": str(tmp_path / "DECISIONS.md"), "content": "# D\nmore\n"},
+        str(tmp_path), POLICY)
+    assert isinstance(reason, str)
+    assert "UTF-8" in reason
+
+
+def test_append_only_edit_drop_denies_when_body_is_invalid_utf8(tmp_path):
+    (tmp_path / "DECISIONS.md").write_bytes(b"kept\n\xff\n")
+    reason = statutor_core.validate(
+        "edit",
+        {"file_path": str(tmp_path / "DECISIONS.md"),
+         "old_string": "kept", "new_string": "gone"},
+        str(tmp_path), POLICY)
+    assert reason is not None
+    assert "append-only" in reason
+    assert "new_string must contain old_string verbatim" in reason
+
+
+def test_hook_denies_invalid_utf8_rewrite(tmp_path):
+    mark_ledger(tmp_path)
+    (tmp_path / "DECISIONS.md").write_bytes(b"# D\n\xff\n")
+    event = {"tool_name": "write",
+             "tool_input": {"file_path": str(tmp_path / "DECISIONS.md"),
+                            "content": "# D\nmore\n"},
+             "cwd": str(tmp_path)}
+    result = run_kernel(["hook"], input_str=json.dumps(event))
+    assert result.returncode == 0
+    data = _hook_deny_json(result)
+    assert "UTF-8" in data["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 # --------------------------------------------------------------------------
@@ -864,6 +1086,34 @@ def test_apply_patch_state_id_change_or_removal_denied(tmp_path):
 def test_apply_patch_state_malformed_addition_denied(tmp_path):
     result = ap(tmp_path, "*** Update File: TASKS.md\n@@\n+- [maybe] T-0002 nope")
     assert "added state task line must use" in result
+
+
+def test_apply_patch_state_new_id_must_advance(tmp_path):
+    (tmp_path / "TASKS.md").write_text("- [ ] T-0005 highest\n", encoding="utf-8")
+    low = ap(tmp_path, "*** Update File: TASKS.md\n@@\n+- [ ] T-0001 low")
+    assert low is not None
+    assert "T-0001" in low
+    assert "greater than existing maximum T-0005" in low
+    kept = ap(tmp_path,
+              "*** Update File: TASKS.md\n@@\n-- [ ] T-0005 highest\n+- [x] T-0005 done")
+    assert kept is None
+    higher = ap(tmp_path, "*** Update File: TASKS.md\n@@\n+- [ ] T-0006 next")
+    assert higher is None
+
+
+def test_apply_patch_state_unreadable_target_denied(tmp_path):
+    as_dir = tmp_path / "dir-case"
+    as_dir.mkdir()
+    (as_dir / "TASKS.md").mkdir()
+    blocked = ap(as_dir, "*** Update File: TASKS.md\n@@\n+- [ ] T-0006 next")
+    assert blocked is not None
+    assert "cannot be read" in blocked
+    as_bytes = tmp_path / "byte-case"
+    as_bytes.mkdir()
+    (as_bytes / "TASKS.md").write_bytes(b"- [ ] T-0005 highest\n\xff\n")
+    invalid = ap(as_bytes, "*** Update File: TASKS.md\n@@\n+- [ ] T-0006 next")
+    assert invalid is not None
+    assert "UTF-8" in invalid
 
 
 @pytest.mark.parametrize("section", [
@@ -1227,6 +1477,15 @@ def test_grok_truncated_governed_write_denies_other_paths_stay_silent(tmp_path):
     assert allowed.stdout == ""
 
 
+def test_truncated_apply_patch_denies_inside_ledger(tmp_path):
+    denied = _grok_hook(tmp_path, {
+        "tool_name": "apply_patch",
+        "tool_input": {"command": "*** Begin Patch\n"},
+        "tool_input_truncated": True,
+    })
+    assert "truncated" in _hook_deny_json(denied)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 def test_grok_hashline_without_old_string_denies_governed_path(tmp_path):
     result = _grok_hook(tmp_path, {
         "tool_name": "hashline_edit",
@@ -1390,10 +1649,36 @@ def test_check_honors_explicit_cwd_argument_over_process_cwd(tmp_path):
     assert "frozen" in result.stderr
 
 
-def test_check_not_fail_open_on_invalid_json_quirk():
-    result = run_kernel(["check", "Write", "{not json"])
-    assert result.returncode == 1
-    assert "Traceback" in result.stderr
+@pytest.mark.parametrize("payload", ["{not json", "42", "[]", "null", '"text"'])
+@pytest.mark.parametrize("prefix", [[], ["--if-ledger"]])
+def test_check_invalid_payload_has_usage_error(payload, prefix):
+    result = run_kernel(["check", *prefix, "Write", payload])
+    assert result.returncode == 64
+    assert "JSON object" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+def test_check_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["check", "write", "{}", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor check" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["check"], ["check", "--if-ledger"],
+                                      ["staged"], ["trust", "approve"]])
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_command_help_without_ledger(command, flag, tmp_path):
+    result = run_kernel([*command, flag], cwd=str(tmp_path))
+    assert result.returncode == 0
+    assert result.stdout.startswith("usage: statutor ")
+    assert result.stderr == ""
+
+
+def test_staged_rejects_surplus_arguments(tmp_path):
+    result = run_kernel(["staged", str(tmp_path), "extra"])
+    assert result.returncode == 64
+    assert "usage: statutor staged" in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1403,7 +1688,9 @@ def test_check_not_fail_open_on_invalid_json_quirk():
 def test_cli_unknown_mode():
     result = run_kernel(["bogus"])
     assert result.returncode == 64
-    assert "typed project-ledger kernel" in result.stdout
+    assert "unknown command: bogus" in result.stderr
+    assert "statutor --help" in result.stderr
+    assert result.stdout == ""
 
 
 # --------------------------------------------------------------------------

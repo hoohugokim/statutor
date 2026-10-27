@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|StrReplace|Shell)$",
+        "matcher": "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|run_terminal_command|run_terminal_cmd|StrReplace|Shell|MultiEdit|NotebookEdit|Delete)$",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/statutor_core.py\" hook" }
         ]

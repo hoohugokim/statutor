@@ -25,7 +25,7 @@ at the statutor repo root):
     # .pre-commit-config.yaml in your project
     repos:
       - repo: https://github.com/hoohugokim/statutor
-        rev: v0.7.4
+        rev: v0.7.5
         hooks: [ { id: statutor } ]
 
 Fallback: copy ./pre-commit into .git/hooks/. When the `statutor` CLI is

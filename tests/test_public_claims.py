@@ -20,8 +20,8 @@ def test_install_snippets_use_real_repository_and_supported_pin() -> None:
     assert f"/plugin marketplace add {expected_repo}" in root
     assert f"repo: {expected_repo}" in root
     assert f"repo: {expected_repo}" in git_adapter
-    assert "rev: v0.7.4" in root
-    assert "rev: v0.7.4" in git_adapter
+    assert "rev: v0.7.5" in root
+    assert "rev: v0.7.5" in git_adapter
     for stale in ("<path-or-url>", "<this repo>", "<your statutor repo url>", "rev: v0.2.0", "rev: v0.4.0", "rev: v0.5.0", "rev: v0.5.1", "rev: v0.6.0"):
         assert stale not in root
         assert stale not in git_adapter
@@ -60,7 +60,8 @@ def test_codex_and_shared_hook_match_apply_patch() -> None:
     matcher = hooks["hooks"]["PreToolUse"][0]["matcher"]
     assert matcher == (
         "^(Write|Edit|Bash|apply_patch|write|search_replace|hashline_edit|"
-        "run_terminal_command|StrReplace|Shell)$")
+        "run_terminal_command|run_terminal_cmd|StrReplace|Shell|"
+        "MultiEdit|NotebookEdit|Delete)$")
     grok = _read("adapters/grok/README.md")
     assert matcher in grok
     assert "nearest `.statutor.yaml` marker" in grok
@@ -77,6 +78,9 @@ def test_automatic_adapters_are_explicit_ledger_only() -> None:
     assert "statutor check --if-ledger" in opencode_source
     grok = _read("adapters/grok/README.md")
     assert "nearest `.statutor.yaml` marker" in grok
+    cursor = _read("adapters/cursor/README.md")
+    assert "nearest `.statutor.yaml` marker" in cursor
+    assert "always emits a permission object" in cursor
 
 
 def test_ci_keeps_dependency_free_matrix_and_complete_release_audit() -> None:

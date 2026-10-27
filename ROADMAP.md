@@ -2,9 +2,9 @@
 # ROADMAP
 
 ## Current milestone <!-- agent-visible -->
-v0.7.4 hardening is released: Python/plugins 0.7.4, npm 0.2.0, and crate 0.1.2.
-T-0049 through T-0054 are complete with independent review and registry proof.
-The next milestone is undecided. Release runbook: `docs/releasing.md`.
+v0.7.5 candidate: Cursor adapter plus 0.7.4 audit fixes (D-0030).
+Python/plugins 0.7.5, npm still 0.2.0, crate 0.1.3. Publication remains a
+human step. Release runbook: `docs/releasing.md`.
 
 ## Next milestone (human context, agents ignore)
 Undecided. Candidates: live-binary E2E automation, host role-signal watch

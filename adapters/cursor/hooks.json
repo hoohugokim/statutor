@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "statutor hook",
+        "matcher": "Write|StrReplace|Shell|Delete|MultiEdit|NotebookEdit|ApplyPatch",
+        "timeout": 30
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "statutor hook",
+        "timeout": 30
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "statutor hook",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "statutor hook --stop",
+        "timeout": 30
+      }
+    ]
+  }
+}

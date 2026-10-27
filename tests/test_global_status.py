@@ -70,6 +70,58 @@ def test_empty_inventory_has_stable_schema_and_no_false_errors(tmp_path: Path) -
         roots, admin_root=tmp_path / "admin") == result
 
 
+@pytest.mark.parametrize("command, expected_exit", [("status", 0), ("doctor", 1)])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_uninitialized_global_cli_gives_one_recovery_step_without_writes(
+    tmp_path, capsys, monkeypatch, command, expected_exit, json_output,
+):
+    roots = substrate.resolve_roots(
+        home=tmp_path / "home", config_root=tmp_path / "config",
+        state_root=tmp_path / "state", environ={}, platform="posix")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", roots.claude_home)
+    monkeypatch.setenv("CODEX_HOME", roots.codex_home)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(Path(roots.opencode_home).parent))
+    args = [command, "--home", roots.home,
+            "--config-root", roots.config_root, "--state-root", roots.state_root]
+    if json_output:
+        args.append("--json")
+
+    assert instructions.main(args) == expected_exit
+    output = capsys.readouterr().out
+    if json_output:
+        result = json.loads(output)
+        assert result["schema_version"] == 1
+        assert result["summary"] == {"errors": 1, "warnings": 0}
+        assert [item["code"] for item in result["diagnostics"]] == [
+            "global-not-initialized"]
+        output = result["diagnostics"][0]["message"]
+    assert "global layer is not initialized" in output
+    assert "run `statutor global init`" in output
+    assert "cannot load JSON" not in output
+    assert not Path(roots.config_root).exists()
+    assert not Path(roots.state_root).exists()
+
+
+@pytest.mark.parametrize("config_kind", ["malformed", "broken-link"])
+def test_partial_global_setup_preserves_invalid_config_diagnostic(tmp_path, config_kind):
+    roots = _roots(tmp_path)
+    config = Path(roots.config_root, "global.json")
+    if config_kind == "malformed":
+        config.write_text("broken", encoding="utf-8")
+    else:
+        config.unlink()
+        config.symlink_to(tmp_path / "missing.json")
+    Path(roots.state_root, "global-state.json").unlink()
+
+    result = diagnostics.global_doctor(roots, admin_root=tmp_path / "admin")
+
+    assert "global-config-invalid" in _codes(result)
+    assert "global-state-missing" in _codes(result)
+    assert "global-not-initialized" not in _codes(result)
+    assert "cannot read JSON" in next(item["message"] for item in result["diagnostics"]
+                                      if item["code"] == "global-config-invalid")
+
+
 @pytest.mark.parametrize("host", substrate.HOSTS)
 def test_filtered_doctor_does_not_orphan_other_managed_hosts(
     tmp_path: Path, host: str,

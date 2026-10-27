@@ -53,7 +53,7 @@ import subprocess
 import sys
 from typing import NamedTuple
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 
 # --------------------------------------------------------------------------
 # policy
@@ -352,6 +352,19 @@ def load_worktree_policy(cwd: str) -> dict:
         return parse_policy(stream.read(), ".statutor.yaml")
 
 
+def overwrite_bounded_filename(root: str, fallback: str = "HANDOFF.md") -> str:
+    """Basename of the overwrite_bounded state file, or `fallback`."""
+    try:
+        for rule in load_worktree_policy(root).get("governed", []):
+            pattern = rule.get("pattern", "")
+            if (rule.get("policy") == "overwrite_bounded" and pattern
+                    and "*" not in pattern and "/" not in pattern):
+                return pattern
+    except Exception:
+        pass
+    return fallback
+
+
 def find_ledger_root(start: str) -> str | None:
     """Nearest ancestor carrying Statutor's explicit ledger marker."""
     current = os.path.abspath(start)
@@ -366,8 +379,7 @@ def find_ledger_root(start: str) -> str | None:
         current = parent
 
 
-def _match_rule(rel_path: str, policy: dict) -> dict | None:
-    rel_path = rel_path.replace(os.sep, "/")
+def _match_rule_text(rel_path: str, policy: dict) -> dict | None:
     base = os.path.basename(rel_path)
     for rule in policy.get("governed", []):
         pat = rule.get("pattern", "")
@@ -376,13 +388,63 @@ def _match_rule(rel_path: str, policy: dict) -> dict | None:
     return None
 
 
+def _stored_rel_path(root: str, rel_path: str) -> str | None:
+    """Directory-entry spelling of `rel_path` when it names one existing file.
+
+    A case-insensitive volume stores one entry, so `agents.md` and
+    `AGENTS.md` are that entry. A case-sensitive volume can store both,
+    and only the entry that is the same file is returned.
+    """
+    absolute = os.path.abspath(os.path.join(root, rel_path))
+    if not os.path.exists(absolute):
+        return None
+    parent = os.path.dirname(absolute)
+    try:
+        names = os.listdir(parent)
+    except OSError:
+        return None
+    matches: list[str] = []
+    for name in names:
+        try:
+            if os.path.samefile(os.path.join(parent, name), absolute):
+                matches.append(name)
+        except OSError:
+            continue
+        if len(matches) > 1:
+            return None
+    if len(matches) != 1:
+        return None
+    stored = matches[0]
+    parent_rel = os.path.dirname(rel_path)
+    if parent_rel in ("", "."):
+        return stored
+    return parent_rel.replace(os.sep, "/") + "/" + stored
+
+
+def _match_rule(rel_path: str, policy: dict, root: str | None = None) -> dict | None:
+    rel_path = rel_path.replace(os.sep, "/")
+    rule = _match_rule_text(rel_path, policy)
+    if rule is not None or not root:
+        return rule
+    stored = _stored_rel_path(root, rel_path)
+    if stored is None or stored == rel_path:
+        return None
+    return _match_rule_text(stored, policy)
+
+
 _SHELL_ALIASES = frozenset({
     "run_command", "run_terminal_command", "run_terminal_cmd", "shell",
 })
 # Edits whose body is not Claude's Edit shape. An empty old_string on these
 # names cannot fall through: that path allows a governed edit the kernel
 # never reconstructed. Claude's own "edit" name keeps the historical behavior.
-_PROVED_EDIT_ALIASES = frozenset({"search_replace", "strreplace", "hashline_edit"})
+_PROVED_EDIT_ALIASES = frozenset({
+    "search_replace", "strreplace", "hashline_edit",
+})
+# MultiEdit and NotebookEdit payloads are not reconstructed. A governed
+# path stays denied whether or not old_string, edits, or any other field
+# is present; the caller rewrites the file with write.
+_WHOLE_FILE_TOOLS = frozenset({"multiedit", "notebookedit"})
 
 
 def _norm(payload: dict, *, copy_path: bool = False) -> dict:
@@ -420,7 +482,10 @@ def _canonicalize(tool: str, payload: dict) -> tuple[str, dict, str]:
         canonical = "write"
     elif original in ("replace_file_content", "search_replace", "strreplace"):
         canonical = "edit"
-    copy_path = canonical in ("write", "edit") or original == "hashline_edit"
+    copy_path = (
+        canonical in ("write", "edit")
+        or original in ("hashline_edit", "multiedit", "notebookedit", "delete")
+    )
     normalized = _norm(payload, copy_path=copy_path)
     if original == "hashline_edit" and normalized.get("old_string"):
         canonical = "edit"
@@ -435,7 +500,7 @@ def _governed_rel(
     if not file_path:
         return None
     _absolute, rel = _resolve_tool_path(file_path, cwd, root)
-    if _match_rule(rel, policy) is None:
+    if _match_rule(rel, policy, root) is None:
         return None
     return rel
 
@@ -463,6 +528,18 @@ def _physical_line_count(content: str | bytes) -> int:
     if not content:
         return 0
     return content.count(newline) + (0 if content.endswith(newline) else 1)
+
+
+def _utf8_denial(rel: str) -> str:
+    return (f"{rel} cannot be read as UTF-8, so the edit cannot be proved safe.")
+
+
+def _decode_governed(blob: bytes) -> str | None:
+    """Return the UTF-8 text, or None when the caller must deny."""
+    try:
+        return blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 _TASK_LINE_RE = re.compile(rf"^- \[([ xX])\] (T-([{_DECIMAL_DIGITS}]{{4,}}))\s+(.+)$")
@@ -516,7 +593,7 @@ def _guard_batch_edit(payload: dict, cwd: str, policy: dict, root: str) -> str |
     if rel is None:
         return None
     path, _ = _resolve_tool_path(payload["file_path"], cwd, root)
-    rule = _match_rule(rel, policy)
+    rule = _match_rule(rel, policy, root)
     if rule and rule.get("policy") == "frozen":
         return f"{rel} is frozen (archived plan). Archived records are immutable."
     unproved = (f"{rel} batch edit cannot be proved safe. Supply exact, disjoint "
@@ -573,12 +650,24 @@ def validate(
     tool, payload, original = _canonicalize(tool, payload)
     if tool == "multi_replace_file_content":
         return _guard_batch_edit(payload, cwd, policy, root)
+    if original in _WHOLE_FILE_TOOLS:
+        rel = _governed_rel(payload, cwd, policy, root)
+        if rel is None:
+            return None
+        return (f"{rel} {original} cannot be proved safe. "
+                "Use write with the complete file.")
     if original in _PROVED_EDIT_ALIASES and not payload.get("old_string"):
         rel = _governed_rel(payload, cwd, policy, root)
         if rel is not None:
             return (f"{rel} edit cannot be proved safe: {original} carried no "
                     "old_string. Retry with the existing text in old_string, "
                     "or use write with the full file.")
+        return None
+    if original == "delete":
+        rel = _governed_rel(payload, cwd, policy, root)
+        if rel is not None:
+            return (f"{rel} is governed: delete is denied. Records are "
+                    "superseded, never removed.")
         return None
 
     if tool == "bash":
@@ -592,7 +681,7 @@ def validate(
     if not file_path:
         return None
     absolute_path, rel = _resolve_tool_path(file_path, cwd, root)
-    rule = _match_rule(rel, policy)
+    rule = _match_rule(rel, policy, root)
     if rule is None:
         return None
     kind = rule.get("policy", "")
@@ -609,9 +698,14 @@ def validate(
         if tool == "write":
             if payload.get("append"):
                 try:
-                    existing = open(absolute_path, encoding="utf-8", newline="").read()
+                    with open(absolute_path, "rb") as handle:
+                        blob = handle.read()
                 except OSError:
                     existing = ""
+                else:
+                    existing = _decode_governed(blob)
+                    if existing is None:
+                        return _utf8_denial(rel)
                 candidate = existing + payload.get("content", "")
             else:
                 candidate = payload.get("content", "")
@@ -620,9 +714,14 @@ def validate(
             new = payload.get("new_string", "")
             if old:
                 try:
-                    existing = open(absolute_path, encoding="utf-8", newline="").read()
+                    with open(absolute_path, "rb") as handle:
+                        blob = handle.read()
                 except OSError:
                     existing = None
+                else:
+                    existing = _decode_governed(blob)
+                    if existing is None:
+                        return _utf8_denial(rel)
                 if existing is not None and old in existing:
                     count = -1 if payload.get("replace_all", False) else 1
                     candidate = existing.replace(old, new, count)
@@ -634,11 +733,16 @@ def validate(
     if kind == "state":
         candidate: str | None = None
         try:
-            existing = open(absolute_path, encoding="utf-8", newline="").read()
+            with open(absolute_path, "rb") as handle:
+                blob = handle.read()
         except FileNotFoundError:
             existing = ""
         except OSError:
             existing = None
+        else:
+            existing = _decode_governed(blob)
+            if existing is None:
+                return _utf8_denial(rel)
         if tool == "write":
             if payload.get("append") and existing is not None:
                 candidate = existing + payload.get("content", "")
@@ -665,10 +769,14 @@ def validate(
         elif tool == "write":
             if not payload.get("append"):
                 try:
-                    existing = open(absolute_path, encoding="utf-8", newline="").read()
+                    with open(absolute_path, "rb") as handle:
+                        existing_bytes = handle.read()
                 except FileNotFoundError:
-                    existing = ""
-                if existing.strip() and existing.strip() not in payload.get("content", ""):
+                    existing_bytes = b""
+                if _decode_governed(existing_bytes) is None:
+                    return _utf8_denial(rel)
+                content = payload.get("content", "")
+                if not _is_pure_line_insertion(existing_bytes, content.encode("utf-8")):
                     return (f"{rel} is append-only. A full rewrite must contain the "
                             "existing content verbatim; records are never modified or deleted.")
     return None
@@ -810,6 +918,22 @@ def _resolve_patch_path(
     return _resolve_tool_path(path, cwd, policy_root)
 
 
+def _apply_update_text(existing: str, minus: list[str], plus: list[str]) -> str:
+    """Apply an update's removed and added lines to the on-disk body."""
+    lines = existing.splitlines(keepends=True)
+    for raw in minus:
+        key = raw[1:].rstrip("\r\n")
+        for index, line in enumerate(lines):
+            if line.rstrip("\r\n") == key:
+                del lines[index]
+                break
+    added = [raw[1:].rstrip("\r\n") + "\n" for raw in plus]
+    text = "".join(lines)
+    if text and not text.endswith("\n") and added:
+        text += "\n"
+    return text + "".join(added)
+
+
 def _size_reason(rel: str, kind: str, rule: dict, content: str) -> str | None:
     """Cap/sections denial for a fully-known body (write tool and Add File)."""
     n = _physical_line_count(content)
@@ -858,10 +982,11 @@ def guard_apply_patch(
     text = payload.get("command", payload.get("patch", ""))
     if not isinstance(text, str) or "*** Begin Patch" not in text:
         return None
+    match_root = os.path.abspath(policy_root or cwd)
 
     for t in _patch_targets(text):
         absolute_path, rel = _resolve_patch_path(t["path"], cwd, policy_root)
-        rule = _match_rule(rel, policy)
+        rule = _match_rule(rel, policy, match_root)
         kind = rule.get("policy", "") if rule else ""
 
         if t["op"] == "delete":
@@ -879,7 +1004,7 @@ def guard_apply_patch(
                     "the archive is denied.")
         if (move_rel is not None
                 and kind in ("constitution", "overwrite_bounded", "append_only", "state")
-                and _match_rule(move_rel, policy) is not rule):
+                and _match_rule(move_rel, policy, match_root) is not rule):
             return (f"{rel} is governed ({kind}): moving it to ungoverned path "
                     f"{move_rel} is denied. Keep it under the same policy rule.")
 
@@ -925,15 +1050,36 @@ def guard_apply_patch(
                 if line[1:].startswith("- [") and not _TASK_LINE_RE.fullmatch(line[1:]):
                     return (f"{rel}: added state task line must use "
                             "`- [ ] T-NNNN detail` or `- [x] T-NNNN detail`.")
+            try:
+                with open(absolute_path, "rb") as handle:
+                    blob = handle.read()
+            except FileNotFoundError:
+                existing = ""
+            except OSError:
+                return f"{rel}: state file cannot be read; refusing the update."
+            else:
+                existing = _decode_governed(blob)
+                if existing is None:
+                    return (f"{rel}: state file cannot be read as UTF-8; "
+                            "refusing the update.")
+            candidate = _apply_update_text(existing, t["minus"], t["plus"])
+            reason = _state_reason(rel, candidate, existing)
+            if reason:
+                return reason
             continue
         if kind in ("constitution", "overwrite_bounded") and (adds or dels):
             cap_key = "hard_max_lines" if kind == "constitution" else "max_lines"
             cap = int(rule.get(cap_key, 200))
             try:
-                cur_n = _physical_line_count(
-                    open(absolute_path, encoding="utf-8", newline="").read())
+                with open(absolute_path, "rb") as handle:
+                    blob = handle.read()
             except OSError:
                 cur_n = None  # unreadable/unmapped path: let the floor judge
+            else:
+                text = _decode_governed(blob)
+                if text is None:
+                    return _utf8_denial(rel)
+                cur_n = _physical_line_count(text)
             if cur_n is not None and cur_n + adds - dels > cap:
                 est = cur_n + adds - dels
                 return (f"{rel} would grow to ~{est} lines (cap {cap}).")
@@ -979,9 +1125,11 @@ def _truncation_reason(
 ) -> str | None:
     """Deny when a cut body would hide a governed mutation or a shell write."""
     canonical, normalized, _original = _canonicalize(tool, payload)
-    if canonical == "bash":
+    if canonical in ("bash", "apply_patch"):
         return ("tool input was truncated; a shell command inside a ledger "
-                "cannot be proved safe.")
+                "cannot be proved safe." if canonical == "bash" else
+                "tool input was truncated; an apply_patch envelope inside a "
+                "ledger cannot be proved safe.")
     if canonical not in ("write", "edit", "hashline_edit"):
         return None
     rel = _governed_rel(normalized, cwd, policy, root)
@@ -998,7 +1146,10 @@ def _automatic_reason(
     root = find_ledger_root(cwd)
     if root is None:
         return None
-    policy = load_policy(root)
+    try:
+        policy = load_policy(root)
+    except _PolicyFailure as exc:
+        return f"committed policy invalid: {exc}"
     if truncated:
         reason = _truncation_reason(tool, payload, cwd, root, policy)
     else:
@@ -1017,7 +1168,7 @@ def _stop_reason_is_session_end(event: dict) -> bool:
     return isinstance(reason, str) and reason != "end_turn"
 
 
-def _run_stop_event(event: dict, is_antigravity: bool) -> int:
+def _run_stop_event(event: dict, is_antigravity: bool, *, is_cursor: bool = False) -> int:
     try:
         if _stop_reason_is_session_end(event):
             return 0
@@ -1046,25 +1197,17 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
         statutor_doctor.check(project_dir)
         findings = [f"WARN  {w}" for w in statutor_doctor.warnings] + [f"ERROR {e}" for e in statutor_doctor.errors]
 
-        state_filename = "HANDOFF.md"
-        try:
-            for rule in load_worktree_policy(project_dir).get("governed", []):
-                pattern = rule.get("pattern", "")
-                if (rule.get("policy") == "overwrite_bounded" and pattern
-                        and "*" not in pattern and "/" not in pattern):
-                    state_filename = pattern
-                    break
-        except Exception:
-            pass
+        state_filename = overwrite_bounded_filename(project_dir)
 
-        sentinel_prefix = f"WARN  {state_filename} last verified"
+        sentinel_prefixes = (f"WARN  {state_filename} last verified",
+                             f"WARN  {state_filename} is not yet verified")
         handoff_path = os.path.join(project_dir, state_filename)
-        if os.path.isfile(handoff_path) and len(findings) == 1 and findings[0].startswith(sentinel_prefix):
+        if os.path.isfile(handoff_path) and len(findings) == 1 and findings[0].startswith(sentinel_prefixes):
             try:
                 handoff_text = open(handoff_path, encoding="utf-8").read()
             except Exception:
                 handoff_text = ""
-            if "last_verified: 1970-01-01" in handoff_text:
+            if re.search(r"(?m)^last_verified:\s*1970-01-01(?:\s|$)", handoff_text):
                 findings = []
 
         if not findings:
@@ -1073,7 +1216,11 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
             return 0
 
         report = "\n".join(findings)
-        if is_antigravity:
+        if is_cursor:
+            print(json.dumps({
+                "followup_message": f"statutor-doctor found drift in the ledger:\n{report}",
+            }))
+        elif is_antigravity:
             print(json.dumps({
                 "decision": "continue",
                 "reason": f"statutor-doctor found drift in the ledger:\n{report}",
@@ -1095,6 +1242,82 @@ def _run_stop_event(event: dict, is_antigravity: bool) -> int:
     return 0
 
 
+_CURSOR_EVENTS = frozenset({
+    "preToolUse", "beforeShellExecution", "beforeMCPExecution", "stop",
+})
+
+
+def _is_cursor(event: dict) -> bool:
+    return event.get("hook_event_name") in _CURSOR_EVENTS
+
+
+def _cursor_permission(decision: str, reason: str | None = None) -> int:
+    payload: dict = {"permission": decision}
+    if reason:
+        message = f"[statutor] {reason}"
+        payload["user_message"] = message
+        payload["agent_message"] = message
+    print(json.dumps(payload))
+    return 0
+
+
+def _cursor_mcp_payload(event: dict) -> tuple[str, dict]:
+    tool = str(event.get("tool_name") or "")
+    if tool.startswith("MCP:"):
+        tool = tool[4:]
+    raw = event.get("tool_input", {})
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            payload = {}
+    elif isinstance(raw, dict):
+        payload = raw
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return tool, payload
+
+
+def _run_cursor_event(event: dict, stop_mode: bool) -> int:
+    """Cursor hooks.json protocol: permission JSON, fail-open as allow."""
+    try:
+        roots = event.get("workspace_roots") or []
+        workspace = roots[0] if isinstance(roots, list) and roots else None
+        cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
+        cwd = cwd or workspace
+        name = event.get("hook_event_name")
+        if stop_mode or name == "stop":
+            if event.get("status") in ("aborted", "error"):
+                return 0
+            if not cwd or event.get("loop_count", 0) != 0:
+                return 0
+            return _run_stop_event({**event, "cwd": cwd}, False, is_cursor=True)
+        if not cwd:
+            return _cursor_permission("allow")
+        if name == "beforeShellExecution":
+            reason = _automatic_reason(
+                "bash", {"command": event.get("command", "")}, cwd)
+        elif name == "beforeMCPExecution":
+            tool, payload = _cursor_mcp_payload(event)
+            reason = _automatic_reason(tool, payload, cwd)
+            if reason is None and payload.get("command"):
+                reason = _automatic_reason("bash", payload, cwd)
+        else:
+            tool, payload = _event_tool(event)
+            reason = _automatic_reason(
+                tool, payload, cwd, truncated=_truncated_input(event))
+        if reason:
+            return _cursor_permission("deny", reason)
+        return _cursor_permission("allow")
+    except Exception:
+        try:
+            return _cursor_permission("allow")
+        except Exception:
+            return 0
+
+
 def run_hook(argv: list[str] | None = None) -> int:
     argv = argv or []
     stop_mode = "--stop" in argv
@@ -1107,6 +1330,7 @@ def run_hook(argv: list[str] | None = None) -> int:
               "run `statutor --help` for modes.", file=sys.stderr)
         return 64
     is_antigravity = force_antigravity
+    raw = ""
     try:
         raw = sys.stdin.read()
         if not raw.strip():
@@ -1115,7 +1339,16 @@ def run_hook(argv: list[str] | None = None) -> int:
         if not isinstance(event, dict):
             return 0
     except Exception:
+        # Cursor permission hooks fail-closed on exit 0 plus invalid JSON.
+        if "hook_event_name" in raw:
+            try:
+                return _cursor_permission("allow")
+            except Exception:
+                return 0
         return 0  # fail open
+
+    if _is_cursor(event):
+        return _run_cursor_event(event, stop_mode)
 
     if "toolCall" in event or "workspacePaths" in event or "executionNum" in event or "terminationReason" in event:
         is_antigravity = True
@@ -1129,9 +1362,12 @@ def run_hook(argv: list[str] | None = None) -> int:
             raw_tool = tool_call.get("name", "")
             raw_args = tool_call.get("args", {}) or {}
             workspace_paths = event.get("workspacePaths", [])
+            workspace = workspace_paths[0] if workspace_paths else None
             target_file = raw_args.get("TargetFile")
-            file_dir = os.path.dirname(os.path.abspath(target_file)) if target_file else None
-            cwd = raw_args.get("Cwd") or file_dir or event.get("cwd") or (workspace_paths[0] if workspace_paths else None)
+            target_dir = (os.path.dirname(target_file)
+                          if isinstance(target_file, str) and os.path.isabs(target_file)
+                          else None)
+            cwd = raw_args.get("Cwd") or event.get("cwd") or workspace or target_dir
             if not cwd:
                 print(json.dumps({"decision": "allow"}))
                 return 0
@@ -1187,13 +1423,26 @@ def run_hook(argv: list[str] | None = None) -> int:
 # --------------------------------------------------------------------------
 
 def run_check(argv: list[str]) -> int:
+    usage = "usage: statutor check [--if-ledger] TOOL JSON [CWD]"
     if_ledger = bool(argv and argv[0] == "--if-ledger")
     if if_ledger:
         argv = argv[1:]
-    if len(argv) < 2:
-        print("usage: statutor check [--if-ledger] TOOL JSON [CWD]", file=sys.stderr)
+    if argv in (["--help"], ["-h"]):
+        print(usage)
+        return 0
+    if len(argv) not in (2, 3):
+        print(usage, file=sys.stderr)
         return 64
-    tool, payload = argv[0], json.loads(argv[1])
+    try:
+        payload = json.loads(argv[1])
+    except json.JSONDecodeError as exc:
+        print(f"statutor check: expected a JSON object; {exc.msg} "
+              f"(line {exc.lineno}, column {exc.colno}).", file=sys.stderr)
+        return 64
+    if not isinstance(payload, dict):
+        print("statutor check: expected a JSON object.", file=sys.stderr)
+        return 64
+    tool = argv[0]
     cwd = argv[2] if len(argv) > 2 else os.getcwd()
     try:
         if if_ledger:
@@ -1499,8 +1748,8 @@ def _policy_violations(cwd: str,
     # Pass 1: record lifecycle and frozen-path transitions.
     for status, old, new in changes:
         code = status[0]
-        old_rule = _match_rule(old, policy) if old is not None else None
-        new_rule = _match_rule(new, policy) if new is not None else None
+        old_rule = _match_rule(old, policy, cwd) if old is not None else None
+        new_rule = _match_rule(new, policy, cwd) if new is not None else None
         old_kind = old_rule.get("policy", "") if old_rule else ""
         new_kind = new_rule.get("policy", "") if new_rule else ""
 
@@ -1528,14 +1777,14 @@ def _policy_violations(cwd: str,
     for status, old, path in changes:
         if path is None:
             continue
-        rule = _match_rule(path, policy)
+        rule = _match_rule(path, policy, cwd)
         if not rule:
             continue
         kind = rule.get("policy", "")
         code = status[0]
         if kind == "append_only":
             baseline = b""
-            old_rule = _match_rule(old, policy) if old is not None else None
+            old_rule = _match_rule(old, policy, cwd) if old is not None else None
             if (code in ("M", "T") or (code == "R" and old_rule is rule)):
                 baseline = _git_bytes(cwd, "show", f"HEAD:{old}")
             candidate = _git_bytes(cwd, "show", f":{path}")
@@ -1559,7 +1808,7 @@ def _policy_violations(cwd: str,
                 violations.append(f"{path}: state content must be valid UTF-8 text.")
                 continue
             baseline: str | None = None
-            old_rule = _match_rule(old, policy) if old is not None else None
+            old_rule = _match_rule(old, policy, cwd) if old is not None else None
             if (code in ("M", "T") or (code == "R" and old_rule is rule)):
                 try:
                     baseline = _git_bytes(cwd, "show", f"HEAD:{old}").decode("utf-8")
@@ -1600,6 +1849,10 @@ def run_staged(cwd: str) -> int:
 
 def run_trust_approve(argv: list[str]) -> int:
     """Create the exact-tree local authorization receipt from D-0015."""
+    if argv in (["--help"], ["-h"]):
+        print("usage: statutor trust approve --decision D-NNNN --reason TEXT "
+              "[--confirm-tree OID] [CWD]")
+        return 0
     cwd = os.getcwd()
     decision = None
     reason = None
@@ -2004,6 +2257,12 @@ def main() -> None:
     if mode == "check":
         sys.exit(run_check(argv[1:]))
     if mode in ("staged", "--staged"):
+        if argv[1:] in (["--help"], ["-h"]):
+            print("usage: statutor staged [CWD]")
+            sys.exit(0)
+        if len(argv) > 2:
+            print("usage: statutor staged [CWD]", file=sys.stderr)
+            sys.exit(64)
         sys.exit(run_staged(argv[1] if len(argv) > 1 else os.getcwd()))
     if mode == "trust" and len(argv) > 1 and argv[1] == "approve":
         sys.exit(run_trust_approve(argv[2:]))
@@ -2018,7 +2277,8 @@ def main() -> None:
     if mode == "worker":
         import statutor_worker
         sys.exit(statutor_worker.worker_cli(argv[1:]))
-    print(__doc__)
+    print(f"unknown command: {mode}; run `statutor --help` for commands.",
+          file=sys.stderr)
     sys.exit(64)
 
 

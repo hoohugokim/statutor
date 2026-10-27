@@ -92,7 +92,7 @@ def _archive_payload(path: Path, expected_root: str) -> dict[str, bytes]:
 def test_package_metadata_is_explicit_and_versioned() -> None:
     cargo_table = _cargo_package_table()
     cargo_version = _cargo_value(cargo_table, "version")
-    assert cargo_version == "0.1.2"
+    assert cargo_version == "0.1.3"
     assert _cargo_array(cargo_table, "include") == CARGO_INCLUDE
 
     cargo_lock = (CRATE / "Cargo.lock").read_text(encoding="utf-8")

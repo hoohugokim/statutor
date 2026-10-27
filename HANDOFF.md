@@ -1,40 +1,35 @@
 <!-- statutor: plane=state | policy=overwrite_bounded (max 40 lines) | writer=executor | OVERWRITE, NEVER APPEND -->
 # HANDOFF
 
-last_verified: 2026-10-21 (UTC) by all PR CI, 15 focused checks, independent editorial review, public GitHub rendering/file hashes, and desktop/narrow layout measurements
-last_worker: codex
+last_verified: 2026-10-27 by `/opt/homebrew/bin/python3 -m pytest -q` (863 passed, 5 skipped)
+last_worker: grok
 last_machine: unknown
-handoff_id: b41b8ad341034c5c85c3756a1bb00974
-supersedes: 57e014efb00e443187d60ce57339a5a0
+handoff_id: none
+supersedes: adc8ff0ea687dddc32a72682ca45db44
 
 ## Goal
-Completed the README redesign approved by the human (T-0055).
+Publish GitHub tag v0.7.5 and install that release locally for live dogfood.
 
 ## Last verified state
-- README is 144 lines, with a compact masthead, badges, navigation, example,
-  quickstart, agent chooser, Git setup, and visible coverage limits.
-- Four linked guides preserve policy/trust, architecture/API, optional global
-  instructions/skills, and worker provenance. Repository links resolve.
-- Antigravity setup now names a real checkout location, registers batch edits,
-  and describes fail-open behavior and the local Git hook's bypass honestly.
-- GitHub Markdown rendering preserves all navigation targets and four images.
-  Browser DOM layout has no article overflow at 1200 px and 390 px widths.
-- Independent editorial review PASS; 15 focused checks pass, including real
-  npm/Cargo payload audits. Runtime code, versions, and policy are unchanged.
-- Hardened release remains Python/plugins 0.7.4, npm 0.2.0, and crate 0.1.2.
-  PR #2/tag publication and public package verification remain complete.
-- PR #3 merged as d0a3bd2; public README, guides, logo, badges, and navigation verified.
+- Python and plugins are 0.7.5. npm stays 0.2.0. The crate stays 0.1.3.
+- Cursor is a first-class adapter. Governed MultiEdit and NotebookEdit stay
+  denied. Case variants match only the same directory entry. Invalid UTF-8
+  is a denial. apply_patch state IDs must advance. Append-only writes use
+  the line-subsequence test.
+- Pytest on 2026-10-27: 863 passed, 5 skipped. The release gate and the host
+  probe still have to pass on this commit before the tag.
 
 ## Next action
-No documentation work remains. Select the next milestone with the human.
+Run the v0.7.5 release gate and the host probe. Tag and publish only after
+both exit 0. Then install the published package with pipx.
 
 ## Gotchas
-- CLI installation and project initialization do not register agent hooks.
-- Hooks fail open; staged checks fail closed. Git hooks allow --no-verify.
-- Begin fresh legacy worker sessions after upgrading; restart Claude for its
-  already-updated 0.7.4 plugin. Global migration remains a separate opt-in.
+- Hooks fail open on a validate exception. Staged mode fails closed.
+- Use Homebrew Python 3.15. The system python3 is 3.9.6.
+- Tag v0.7.5 starts publish.yml and uploads to PyPI. Do not move the tag.
+- Host pins stay Claude 2.1.296, Codex 0.162.1, and OpenCode 2.1.1.
 
 ## Do not touch
-Embedded templates/init profiles; frozen archive; DECISIONS.md header;
-root pre-commit metadata. Preserve untracked .agents/, _local/, assets/,
-notes/, and plans/v0.4-dogfood.pdf.
+Embedded templates and init profiles; plans/archive/; the DECISIONS.md
+header; root pre-commit metadata; ROADMAP.md. npm and crates.io stay pending.
+Keep untracked .agents/, _local/, assets/, notes/, and plans/v0.4-dogfood.pdf.

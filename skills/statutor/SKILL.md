@@ -49,7 +49,8 @@ Non-negotiable rules:
 6. **Single writer per file.** Subagents use `notes/<task-id>.md`.
 7. **No shell writes to governed files** (`>>`, `sed -i`, ...) — the bash
    guard denies them; use the editor tools. On Grok Build those tools are
-   `search_replace`, `write`, and `run_terminal_command`.
+   `search_replace`, `write`, and `run_terminal_command`. On Cursor those
+   tools are `Write`, `StrReplace`, `Shell`, and mapped MCP payloads.
 8. **Drift surfaces at Stop, not just in-loop.** The host Stop hook
    (`hooks/stop_doctor.py`) runs `statutor-doctor` after each turn and adds its
    WARN/ERROR lines as context — once per turn, silent on a clean ledger.

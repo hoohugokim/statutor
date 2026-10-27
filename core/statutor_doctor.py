@@ -66,6 +66,16 @@ def _rule_filename(rule: dict | None, default: str) -> str:
     return default
 
 
+def _read_text(path: str, label: str) -> str | None:
+    """Read one governed file. An undecodable body is an error, not a crash."""
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except UnicodeDecodeError:
+        errors.append(f"{label} cannot be read as UTF-8.")
+        return None
+
+
 def check(root: str) -> None:
     errors.clear()
     warnings.clear()
@@ -106,65 +116,74 @@ def check(root: str) -> None:
             errors.append(f"missing governed file: {name} (run `statutor init .`)")
 
     if os.path.isfile(p(agents_filename)):
-        n = sum(1 for _ in open(p(agents_filename), encoding="utf-8"))
-        if n > soft_agents_lines:
-            warnings.append(
-                f"{agents_filename} is {n} lines (soft budget {soft_agents_lines}): "
-                "trim derivable content, move procedures to skills."
-            )
-
-    if os.path.isfile(p(handoff_filename)):
-        text = open(p(handoff_filename), encoding="utf-8").read()
-        m = re.search(r"last_verified:\s*(\d{4}-\d{2}-\d{2})", text)
-        if not m:
-            errors.append(f"{handoff_filename} has no `last_verified: YYYY-MM-DD` stamp.")
-        else:
-            stamp = m.group(1)
-            try:
-                verified = datetime.strptime(stamp, "%Y-%m-%d").date()
-            except ValueError:
-                errors.append(f"{handoff_filename} has invalid last_verified date {stamp}.")
-                verified = None
-            if verified is not None and verified > date.today():
-                errors.append(f"{handoff_filename} last_verified date {stamp} is in the future.")
-            elif verified is not None and (date.today() - verified).days > handoff_stale_days:
-                age = (date.today() - verified).days
+        agents_text = _read_text(p(agents_filename), agents_filename)
+        if agents_text is not None:
+            n = len(agents_text.splitlines())
+            if n > soft_agents_lines:
                 warnings.append(
-                    f"{handoff_filename} last verified {age} days ago — re-verify or rewrite."
+                    f"{agents_filename} is {n} lines (soft budget {soft_agents_lines}): "
+                    "trim derivable content, move procedures to skills."
                 )
 
-        required_sections = overwrite_rule.get("required_sections", []) if overwrite_rule else []
-        missing_sections = [s for s in required_sections if s not in text]
-        if missing_sections:
-            errors.append(
-                f"{handoff_filename} is missing required sections: "
-                f"{', '.join(missing_sections)} — a file on disk without these "
-                "bypassed the hook/floor (that's drift)."
-            )
+    if os.path.isfile(p(handoff_filename)):
+        text = _read_text(p(handoff_filename), handoff_filename)
+        if text is not None:
+            m = re.search(r"last_verified:\s*(\d{4}-\d{2}-\d{2})", text)
+            if not m:
+                errors.append(f"{handoff_filename} has no `last_verified: YYYY-MM-DD` stamp.")
+            else:
+                stamp = m.group(1)
+                try:
+                    verified = datetime.strptime(stamp, "%Y-%m-%d").date()
+                except ValueError:
+                    errors.append(f"{handoff_filename} has invalid last_verified date {stamp}.")
+                    verified = None
+                if verified is not None and verified > date.today():
+                    errors.append(f"{handoff_filename} last_verified date {stamp} is in the future.")
+                elif verified is not None and stamp == "1970-01-01":
+                    warnings.append(
+                        f"{handoff_filename} is not yet verified — run project checks, "
+                        "then replace last_verified with the verification date."
+                    )
+                elif verified is not None and (date.today() - verified).days > handoff_stale_days:
+                    age = (date.today() - verified).days
+                    warnings.append(
+                        f"{handoff_filename} last verified {age} days ago — re-verify or rewrite."
+                    )
 
-        fields = statutor_worker.parse_handoff_fields(text)
-        if all(fields[name] is None
-               for name in statutor_worker.ATTRIBUTION_FIELDS):
-            warnings.append(
-                f"{handoff_filename} has no v0.5 worker attribution block "
-                "(last_worker/last_machine/handoff_id/supersedes) — pre-v0.5 "
-                "ledger, still valid; add it on the next rewrite and record "
-                "completion with `statutor worker complete --session <id>`."
-            )
-        else:
-            for problem in statutor_worker.validate_handoff_metadata(text):
-                errors.append(f"{handoff_filename}: {problem}")
+            required_sections = overwrite_rule.get("required_sections", []) if overwrite_rule else []
+            missing_sections = [s for s in required_sections if s not in text]
+            if missing_sections:
+                errors.append(
+                    f"{handoff_filename} is missing required sections: "
+                    f"{', '.join(missing_sections)} — a file on disk without these "
+                    "bypassed the hook/floor (that's drift)."
+                )
+
+            fields = statutor_worker.parse_handoff_fields(text)
+            if all(fields[name] is None
+                   for name in statutor_worker.ATTRIBUTION_FIELDS):
+                warnings.append(
+                    f"{handoff_filename} has no v0.5 worker attribution block "
+                    "(last_worker/last_machine/handoff_id/supersedes) — pre-v0.5 "
+                    "ledger, still valid; add it on the next rewrite and record "
+                    "completion with `statutor worker complete --session <id>`."
+                )
+            else:
+                for problem in statutor_worker.validate_handoff_metadata(text):
+                    errors.append(f"{handoff_filename}: {problem}")
 
     done_ids: set[str] = set()
     if os.path.isfile(p(tasks_filename)):
-        state_body = open(p(tasks_filename), encoding="utf-8").read()
-        state_error = statutor_core._state_reason(tasks_filename, state_body)
-        if state_error:
-            errors.append(state_error)
-        for line in state_body.splitlines():
-            m = re.match(r"- \[x\]\s+(\S+)", line, re.IGNORECASE)
-            if m:
-                done_ids.add(m.group(1))
+        state_body = _read_text(p(tasks_filename), tasks_filename)
+        if state_body is not None:
+            state_error = statutor_core._state_reason(tasks_filename, state_body)
+            if state_error:
+                errors.append(state_error)
+            for line in state_body.splitlines():
+                m = re.match(r"- \[x\]\s+(\S+)", line, re.IGNORECASE)
+                if m:
+                    done_ids.add(m.group(1))
 
     plans_dir = p("plans")
     if os.path.isdir(plans_dir):
@@ -172,7 +191,9 @@ def check(root: str) -> None:
             fpath = os.path.join(plans_dir, fname)
             if not fname.endswith(".md") or not os.path.isfile(fpath):
                 continue
-            body = open(fpath, encoding="utf-8").read()
+            body = _read_text(fpath, f"plans/{fname}")
+            if body is None:
+                continue
             hit = [t for t in done_ids if t in body]
             if hit:
                 warnings.append(
@@ -181,14 +202,15 @@ def check(root: str) -> None:
                 )
 
     if os.path.isfile(p(decisions_filename)):
-        body = open(p(decisions_filename), encoding="utf-8").read()
-        records = re.findall(r"^## D-\d+", body, re.MULTILINE)
-        statuses = re.findall(r"^\*\*Status:\*\*", body, re.MULTILINE)
-        if len(statuses) < len(records):
-            warnings.append(
-                f"{decisions_filename}: {len(records)} records but only {len(statuses)} "
-                "Status fields — every record needs one."
-            )
+        body = _read_text(p(decisions_filename), decisions_filename)
+        if body is not None:
+            records = re.findall(r"^## D-\d+", body, re.MULTILINE)
+            statuses = re.findall(r"^\*\*Status:\*\*", body, re.MULTILINE)
+            if len(statuses) < len(records):
+                warnings.append(
+                    f"{decisions_filename}: {len(records)} records but only {len(statuses)} "
+                    "Status fields — every record needs one."
+                )
 
 
 def main() -> None:
